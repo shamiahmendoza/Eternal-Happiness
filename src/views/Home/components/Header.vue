@@ -1,11 +1,27 @@
+
 <script setup>
 import { ref } from 'vue'
 import { heroImage } from '../../../services/mediaService'
 
-console.log('Hero image URL:', heroImage)
-
 const imageLoaded = ref(false)
 const imageError = ref(false)
+
+console.log('Hero image URL:', heroImage)
+
+function handleImageLoad() {
+  imageLoaded.value = true
+  imageError.value = false
+
+  console.log('Hero image loaded successfully:', heroImage)
+}
+
+function handleImageError(event) {
+  imageLoaded.value = false
+  imageError.value = true
+
+  console.error('Failed image URL:', event.target.currentSrc)
+  console.error('Image source:', event.target.src)
+}
 </script>
 
 <template>
@@ -51,15 +67,14 @@ const imageError = ref(false)
       <!-- Hero Image -->
       <div class="order-1 md:order-2">
         <div class="relative">
-            <img
+
+          <img
             :src="heroImage"
             alt="Convention gathering"
-            @load="imageLoaded = true"
-            @error="(event) => {
-                imageError = true
-                console.error('Image failed:', event.target.src)
-            }"
-            />
+            class="h-[300px] w-full object-cover md:h-[450px]"
+            @load="handleImageLoad"
+            @error="handleImageError"
+          />
 
           <!-- Image Loading Status -->
           <div
@@ -78,10 +93,13 @@ const imageError = ref(false)
 
           <div
             v-if="imageError"
-            class="absolute bottom-3 left-3 bg-red-100 px-3 py-2 text-[10px] text-red-700"
+            class="absolute bottom-3 left-3 max-w-[90%] break-all bg-red-100 px-3 py-2 text-[10px] text-red-700"
           >
-            Unable to load R2 image
+            Unable to load R2 image.
+            <br />
+            {{ heroImage }}
           </div>
+
         </div>
 
         <div class="mt-3 flex justify-between text-[9px] uppercase tracking-widest text-gray-400">
