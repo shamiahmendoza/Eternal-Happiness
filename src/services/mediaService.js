@@ -1,3 +1,4 @@
+
 const R2_BASE_URL = import.meta.env.VITE_R2_BASE_URL
 
 export function getMediaUrl(key) {
