@@ -5,6 +5,7 @@ import PhotoHeader from './components/PhotoHeader.vue'
 import PhotoToolbar from './components/PhotoToolbar.vue'
 import PhotoGallery from './components/PhotoGallery.vue'
 import PhotoCTA from './components/PhotoCTA.vue'
+import { heroImage } from '../../services/mediaService'
 
 // Categories available in the gallery
 const categories = [
@@ -27,42 +28,42 @@ const photos = ref([
     title: 'Together in Manila',
     category: 'Event',
     date: 'November 2, 2026',
-    image: 'https://images.unsplash.com/photo-1511632765486-a01980e01f18?auto=format&fit=crop&w=1000&q=85'
+    image: heroImage
   },
   {
     id: 2,
     title: 'United in worship',
     category: 'Ministry',
     date: 'November 2, 2026',
-    image: 'https://images.unsplash.com/photo-1507692049790-de58290a4334?auto=format&fit=crop&w=1000&q=85'
+    image: heroImage
   },
   {
     id: 3,
     title: 'Warmth & fellowship',
     category: 'Event',
     date: 'November 2, 2026',
-    image: 'https://images.unsplash.com/photo-1511795409834-ef04bbd61622?auto=format&fit=crop&w=1000&q=85'
+    image: heroImage
   },
   {
     id: 4,
     title: 'Around the table',
     category: 'Shared meals',
     date: 'November 2, 2026',
-    image: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1000&q=85'
+    image: heroImage
   },
   {
     id: 5,
     title: 'Moments together',
     category: 'Ministry',
     date: 'November 2, 2026',
-    image: 'https://images.unsplash.com/photo-1527529482837-4698179dc6ce?auto=format&fit=crop&w=1000&q=85'
+    image: heroImage
   },
   {
     id: 6,
     title: 'Manila, remembered',
     category: 'Manila',
     date: 'November 2, 2026',
-    image: 'https://images.unsplash.com/photo-1518509562904-e7ef99cdcc86?auto=format&fit=crop&w=1000&q=85'
+    image: heroImage
   }
 ])
 

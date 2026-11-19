@@ -1,28 +1,26 @@
 <script setup>
+import { heroImage } from '../../../services/mediaService'
+
 const photos = [
   {
     title: 'Warmth of fellowship',
     description: 'A welcome that feels like home.',
-    image:
-      'https://images.unsplash.com/photo-1511632765486-a01980e01f18?auto=format&fit=crop&w=700&q=85'
+    image: heroImage
   },
   {
     title: 'All the smiles',
     description: 'Joy in every moment.',
-    image:
-      'https://images.unsplash.com/photo-1511795409834-ef04bbd61622?auto=format&fit=crop&w=700&q=85'
+    image: heroImage
   },
   {
     title: 'Around the table',
     description: 'Good company, grateful hearts.',
-    image:
-      'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=700&q=85'
+    image: heroImage
   },
   {
     title: 'Moments together',
     description: 'Memories worth keeping.',
-    image:
-      'https://images.unsplash.com/photo-1527529482837-4698179dc6ce?auto=format&fit=crop&w=700&q=85'
+    image: heroImage
   }
 ]
 </script>

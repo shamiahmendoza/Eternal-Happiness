@@ -1,8 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { getMediaUrl } from '../../../services/mediaService'
-
-const heroImage = getMediaUrl('Event/cat.jfif')
+import { heroImage } from '../../../services/mediaService'
 
 const imageLoaded = ref(false)
 const imageError = ref(false)

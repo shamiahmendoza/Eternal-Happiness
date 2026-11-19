@@ -1,6 +1,7 @@
 <script setup>
-const image =
-  'https://images.unsplash.com/photo-1527529482837-4698179dc6ce?auto=format&fit=crop&w=1200&q=85'
+import { heroImage } from '../../../services/mediaService'
+
+const image = heroImage
 </script>
 
 <template>

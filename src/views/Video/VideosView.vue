@@ -5,6 +5,7 @@ import VideoHeader from './components/VideoHeader.vue'
 import FeaturedVideo from './components/FeaturedVideo.vue'
 import VideoGallery from './components/VideoGallery.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
+import { heroImage } from '../../services/mediaService'
 
 // Temporary sample video URL
 const sampleVideoUrl =
@@ -16,8 +17,7 @@ const featuredVideo = {
   title: 'Our time in Manila',
   description: 'Convention highlights · Manila, Philippines',
   category: 'Convention',
-  thumbnail:
-    'https://images.unsplash.com/photo-1511795409834-ef04bbd61622?auto=format&fit=crop&w=1600&q=85',
+  thumbnail: heroImage,
   url: sampleVideoUrl
 }
 
@@ -27,8 +27,7 @@ const videos = ref([
     id: 2,
     title: 'Worshipping together',
     category: 'Convention',
-    thumbnail:
-      'https://images.unsplash.com/photo-1507692049790-de58290a4334?auto=format&fit=crop&w=900&q=85',
+    thumbnail: heroImage,
     description: 'Moments of worship and encouragement.',
     url: sampleVideoUrl
   },
@@ -36,8 +35,7 @@ const videos = ref([
     id: 3,
     title: 'A warm Filipino welcome',
     category: 'Fellowship',
-    thumbnail:
-      'https://images.unsplash.com/photo-1511632765486-a01980e01f18?auto=format&fit=crop&w=900&q=85',
+    thumbnail: heroImage,
     description: 'The warmth of friendship and hospitality.',
     url: sampleVideoUrl
   },
@@ -45,8 +43,7 @@ const videos = ref([
     id: 4,
     title: 'Friendships to treasure',
     category: 'Together',
-    thumbnail:
-      'https://images.unsplash.com/photo-1527529482837-4698179dc6ce?auto=format&fit=crop&w=900&q=85',
+    thumbnail: heroImage,
     description: 'The memories and friendships we treasure.',
     url: sampleVideoUrl
   }
