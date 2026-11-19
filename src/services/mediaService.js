@@ -11,4 +11,4 @@ export function getMediaUrl(key) {
   return `${R2_BASE_URL.replace(/\/$/, '')}/${cleanKey}`
 }
 
-export const heroImage = getMediaUrl('Event/cat.jfif')
+export const heroImage = getMediaUrl('Event/cat.jpg')

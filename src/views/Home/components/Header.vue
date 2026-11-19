@@ -49,13 +49,15 @@ const imageError = ref(false)
       <!-- Hero Image -->
       <div class="order-1 md:order-2">
         <div class="relative">
-          <img
+            <img
             :src="heroImage"
             alt="Convention gathering"
-            class="h-[260px] w-full border-r-4 border-[#F5C400] object-cover md:h-[360px]"
             @load="imageLoaded = true"
-            @error="imageError = true"
-          />
+            @error="(event) => {
+                imageError = true
+                console.error('Image failed:', event.target.src)
+            }"
+            />
 
           <!-- Image Loading Status -->
           <div
