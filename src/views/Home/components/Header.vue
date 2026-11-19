@@ -2,6 +2,8 @@
 import { ref } from 'vue'
 import { heroImage } from '../../../services/mediaService'
 
+console.log('Hero image URL:', heroImage)
+
 const imageLoaded = ref(false)
 const imageError = ref(false)
 </script>
