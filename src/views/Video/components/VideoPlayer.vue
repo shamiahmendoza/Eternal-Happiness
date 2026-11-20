@@ -2,8 +2,8 @@
 defineProps({
   video: {
     type: Object,
-    default: null
-  }
+    default: null,
+  },
 })
 
 defineEmits(['close'])
@@ -16,7 +16,6 @@ defineEmits(['close'])
     @click.self="$emit('close')"
   >
     <div class="w-full max-w-5xl">
-
       <!-- Close Button -->
       <div class="mb-3 flex justify-end">
         <button
@@ -38,7 +37,8 @@ defineEmits(['close'])
         playsinline
         preload="metadata"
       >
-        <source :src="video.url" type="video/mp4" />
+        <source :src="video.url" :type="video.contentType || 'video/mp4'" />
+
         Your browser does not support video playback.
       </video>
 
@@ -52,7 +52,6 @@ defineEmits(['close'])
           {{ video.description }}
         </p>
       </div>
-
     </div>
   </div>
 </template>

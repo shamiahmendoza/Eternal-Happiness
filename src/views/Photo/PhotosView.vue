@@ -5,7 +5,6 @@ import { useRoute } from 'vue-router'
 import PhotoHeader from './components/PhotoHeader.vue'
 import PhotoToolbar from './components/PhotoToolbar.vue'
 import PhotoGallery from './components/PhotoGallery.vue'
-import PhotoCTA from './components/PhotoCTA.vue'
 import PhotoUpload from '../../component/PhotoUpload.vue'
 
 const route = useRoute()
@@ -22,6 +21,9 @@ const sortOrder = ref('newest')
 
 const loading = ref(false)
 const loadError = ref('')
+
+// Upload modal
+const showUploadModal = ref(false)
 
 // Admin controls
 const adminMode = ref(false)
@@ -45,7 +47,7 @@ const formatDate = (dateValue) => {
   })
 }
 
-// Fetch photos from the Worker API
+// Fetch photos
 const fetchPhotos = async () => {
   loading.value = true
   loadError.value = ''
@@ -76,8 +78,18 @@ const fetchPhotos = async () => {
   }
 }
 
-// Refresh photos after uploading
+// Upload modal controls
+const openUploadModal = () => {
+  showUploadModal.value = true
+}
+
+const closeUploadModal = () => {
+  showUploadModal.value = false
+}
+
+// Refresh after successful upload
 const handleUpload = () => {
+  closeUploadModal()
   fetchPhotos()
 }
 
@@ -109,7 +121,7 @@ const filteredPhotos = computed(() => {
   return result
 })
 
-// Open or close admin mode through the footer URL
+// Admin mode from footer link
 watch(
   () => route.query.admin,
   (value) => {
@@ -124,7 +136,7 @@ watch(
   { immediate: true },
 )
 
-// Delete a photo
+// Delete photo
 const deletePhoto = async (photo) => {
   deleteError.value = ''
   deleteMessage.value = ''
@@ -165,10 +177,8 @@ const deletePhoto = async (photo) => {
   }
 }
 
-// Load photos when the page opens
-onMounted(() => {
-  fetchPhotos()
-})
+// Load photos
+onMounted(fetchPhotos)
 </script>
 
 <template>
@@ -176,10 +186,47 @@ onMounted(() => {
     <!-- Page Header -->
     <PhotoHeader />
 
-    <!-- Upload Section -->
-    <section class="mx-auto max-w-7xl px-6 py-8 md:px-10">
-      <PhotoUpload media-type="photo" @uploaded="handleUpload" />
-    </section>
+    <!-- Upload Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showUploadModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-8"
+        @click.self="closeUploadModal"
+      >
+        <div
+          class="relative my-auto w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl md:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="uploadPhotoModalTitle"
+        >
+          <!-- Modal Header -->
+          <div class="mb-6 flex items-center justify-between gap-4">
+            <div>
+              <h2
+                id="uploadPhotoModalTitle"
+                class="font-serif text-2xl font-semibold text-[#393970]"
+              >
+                Upload a Photo
+              </h2>
+
+              <p class="mt-1 text-sm text-gray-500">Share your memories with everyone.</p>
+            </div>
+
+            <button
+              type="button"
+              @click="closeUploadModal"
+              aria-label="Close upload modal"
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-800"
+            >
+              &times;
+            </button>
+          </div>
+
+          <!-- Photo Upload Component -->
+          <PhotoUpload media-type="photo" @uploaded="handleUpload" />
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Admin Management Panel -->
     <section v-if="adminMode" class="mx-auto max-w-7xl px-6 pb-8 md:px-10">
@@ -187,6 +234,7 @@ onMounted(() => {
         <div class="mb-5 flex items-center justify-between gap-4">
           <div>
             <h2 class="text-lg font-semibold text-gray-800">Photo Management</h2>
+
             <p class="mt-1 text-sm text-gray-500">Manage and delete uploaded photos.</p>
           </div>
 
@@ -307,7 +355,25 @@ onMounted(() => {
 
       <PhotoGallery :photos="filteredPhotos" />
 
-      <PhotoCTA />
+      <!-- Add Photo CTA -->
+      <section class="mx-auto max-w-7xl px-6 pb-16 pt-12 md:px-10">
+        <div class="border-t border-[#E8E6E0] pt-10 text-center">
+          <h2 class="font-serif text-2xl font-semibold text-[#393970]">Want to add a photo?</h2>
+
+          <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500">
+            Share a favorite moment and let it become part of our memories.
+          </p>
+
+          <button
+            type="button"
+            @click="openUploadModal"
+            class="mt-5 inline-flex items-center gap-2 rounded-full border border-[#393970] px-6 py-2.5 text-sm font-medium text-[#393970] transition hover:bg-[#393970] hover:text-white"
+          >
+            <span class="text-base">+</span>
+            Add a Photo
+          </button>
+        </div>
+      </section>
     </template>
   </main>
 </template>

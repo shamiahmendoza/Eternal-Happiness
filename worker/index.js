@@ -1,4 +1,6 @@
+
 const MAX_FILE_SIZE = 90 * 1024 * 1024
+const MAX_THUMBNAIL_SIZE = 2 * 1024 * 1024
 
 const CATEGORIES = {
   Event: 'event',
@@ -8,14 +10,24 @@ const CATEGORIES = {
 }
 
 const ALLOWED_TYPES = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-  'video/mp4': 'mp4',
-  'video/webm': 'webm',
-  'video/quicktime': 'mov',
+  photo: [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+  ],
+  video: [
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+  ],
 }
+
+const encoder = new TextEncoder()
+
+// --------------------------------------------------
+// HELPERS
+// --------------------------------------------------
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -27,395 +39,888 @@ function json(data, status = 200) {
   })
 }
 
-function decodeHeader(value = '') {
+function decodeHeader(value) {
+  if (!value) return ''
+
   try {
-    return decodeURIComponent(value).trim()
+    return decodeURIComponent(value)
   } catch {
-    return null
+    return value
   }
 }
 
-async function verifyPassword(input, expected) {
-  if (!input || !expected) return false
+function getMediaUrl(key) {
+  return `/media/${key
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')}`
+}
 
-  const encoder = new TextEncoder()
+function validId(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    id,
+  )
+}
 
-  const [inputHash, expectedHash] = await Promise.all([
-    crypto.subtle.digest('SHA-256', encoder.encode(input)),
-    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
-  ])
+async function verifyPassword(provided, expected) {
+  if (!provided || !expected) return false
 
-  const a = new Uint8Array(inputHash)
-  const b = new Uint8Array(expectedHash)
+  const providedHash = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      encoder.encode(provided),
+    ),
+  )
+
+  const expectedHash = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      encoder.encode(expected),
+    ),
+  )
+
+  if (providedHash.length !== expectedHash.length) {
+    return false
+  }
 
   let difference = 0
 
-  for (let i = 0; i < a.length; i++) {
-    difference |= a[i] ^ b[i]
+  for (let i = 0; i < providedHash.length; i++) {
+    difference |= providedHash[i] ^ expectedHash[i]
   }
 
   return difference === 0
 }
 
-async function getMedia(request, env) {
-  const url = new URL(request.url)
-
-  const type = url.searchParams.get('type')
-  const category = url.searchParams.get('category')
-
-  if (type && !['photo', 'video'].includes(type)) {
-    return json({ error: 'Invalid media type.' }, 400)
-  }
-
-  if (category && !Object.hasOwn(CATEGORIES, category)) {
-    return json({ error: 'Invalid category.' }, 400)
-  }
-
-  let sql = `
-    SELECT
-      id,
-      title,
-      description,
-      category,
-      media_type,
-      r2_key,
-      content_type,
-      size_bytes,
-      created_at
-    FROM media
-    WHERE 1 = 1
-  `
-
-  const params = []
-
-  if (type) {
-    sql += ' AND media_type = ?'
-    params.push(type)
-  }
-
-  if (category) {
-    sql += ' AND category = ?'
-    params.push(category)
-  }
-
-  sql += ' ORDER BY created_at DESC LIMIT 200'
-
-  const result = await env.eternalhappiness_db
-    .prepare(sql)
-    .bind(...params)
-    .all()
-
-  const items = (result.results || []).map((item) => ({
-    ...item,
-    media_url: `/media/${item.r2_key.split('/').map(encodeURIComponent).join('/')}`,
-  }))
-
-  return json({ items })
-}
-
-async function uploadMedia(request, env) {
+async function requireUploadPassword(request, env) {
   const password = request.headers.get('X-Upload-Password')
 
-  const validPassword = await verifyPassword(password, env.UPLOAD_PASSWORD)
+  return verifyPassword(password, env.UPLOAD_PASSWORD)
+}
 
-  if (!validPassword) {
-    return json({ error: 'Incorrect upload password.' }, 401)
+async function requireAdminPassword(request, env) {
+  const password = request.headers.get('X-Admin-Password')
+
+  return verifyPassword(password, env.ADMIN_PASSWORD)
+}
+
+// --------------------------------------------------
+// GET MEDIA
+// --------------------------------------------------
+
+async function getMedia(request, env) {
+  const url = new URL(request.url)
+  const type = url.searchParams.get('type')
+
+  if (!['photo', 'video'].includes(type)) {
+    return json({
+      error: 'Invalid media type.',
+    }, 400)
   }
 
-  const contentType = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase()
+  try {
+    const result = await env.eternalhappiness_db
+      .prepare(`
+        SELECT
+          id,
+          title,
+          description,
+          category,
+          media_type,
+          r2_key,
+          thumbnail_key,
+          content_type,
+          size_bytes,
+          created_at
+        FROM media
+        WHERE media_type = ?
+        ORDER BY created_at DESC
+      `)
+      .bind(type)
+      .all()
 
-  const extension = ALLOWED_TYPES[contentType]
+    const items = (result.results || []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      description: item.description,
+      category: item.category,
+      media_type: item.media_type,
+      media_url: getMediaUrl(item.r2_key),
+      thumbnail_url: item.thumbnail_key
+        ? getMediaUrl(item.thumbnail_key)
+        : null,
+      content_type: item.content_type,
+      size_bytes: item.size_bytes,
+      created_at: item.created_at,
+    }))
 
-  if (!extension) {
-    return json({ error: 'Unsupported file type.' }, 400)
+    return json({ items })
+  } catch (error) {
+    console.error('Get media error:', error)
+
+    return json({
+      error: 'Could not retrieve media.',
+    }, 500)
+  }
+}
+
+// --------------------------------------------------
+// UPLOAD PHOTO OR VIDEO
+// --------------------------------------------------
+
+async function uploadMedia(request, env) {
+  const authorized = await requireUploadPassword(request, env)
+
+  if (!authorized) {
+    return json({
+      error: 'Invalid upload password.',
+    }, 401)
   }
 
-  const category = decodeHeader(request.headers.get('X-Category') || '')
+  const contentType = request.headers.get('Content-Type') || ''
+  const fileSize = Number(request.headers.get('X-File-Size') || 0)
 
-  if (!category || !Object.hasOwn(CATEGORIES, category)) {
-    return json({ error: 'Invalid category.' }, 400)
+  if (!fileSize || fileSize > MAX_FILE_SIZE) {
+    return json({
+      error: 'Invalid file size. Maximum allowed size is 90 MB.',
+    }, 400)
   }
 
-  const title = decodeHeader(request.headers.get('X-Title') || '')
+  const mediaType = contentType.startsWith('image/')
+    ? 'photo'
+    : contentType.startsWith('video/')
+      ? 'video'
+      : null
 
-  const description = decodeHeader(request.headers.get('X-Description') || '')
-
-  if (title === null || !title || title.length > 150) {
-    return json(
-      {
-        error: 'Title is required (maximum 150 characters).',
-      },
-      400,
-    )
+  if (!mediaType || !ALLOWED_TYPES[mediaType].includes(contentType)) {
+    return json({
+      error: 'Unsupported file format.',
+    }, 400)
   }
 
-  if (description === null || description.length > 1000) {
-    return json(
-      {
-        error: 'Description is too long or invalid.',
-      },
-      400,
-    )
+  const title = decodeHeader(
+    request.headers.get('X-Title'),
+  ).trim()
+
+  const description = decodeHeader(
+    request.headers.get('X-Description'),
+  ).trim()
+
+  const category = decodeHeader(
+    request.headers.get('X-Category'),
+  ).trim()
+
+  if (!title || title.length > 150) {
+    return json({
+      error: 'A valid title is required.',
+    }, 400)
   }
 
-  const size = Number(request.headers.get('X-File-Size'))
-
-  if (!Number.isSafeInteger(size) || size <= 0) {
-    return json({ error: 'Invalid file size.' }, 400)
+  if (description.length > 1000) {
+    return json({
+      error: 'Description is too long.',
+    }, 400)
   }
 
-  if (size > MAX_FILE_SIZE) {
-    return json(
-      {
-        error: 'File exceeds the 90 MB upload limit.',
-      },
-      413,
-    )
+  if (!Object.hasOwn(CATEGORIES, category)) {
+    return json({
+      error: 'Invalid category.',
+    }, 400)
   }
 
-  if (!request.body) {
-    return json({ error: 'No file was provided.' }, 400)
+  let fileBuffer
+
+  try {
+    fileBuffer = await request.arrayBuffer()
+  } catch (error) {
+    console.error('File reading error:', error)
+
+    return json({
+      error: 'Could not read uploaded file.',
+    }, 400)
   }
 
-  const mediaType = contentType.startsWith('image/') ? 'photo' : 'video'
+  if (!fileBuffer.byteLength || fileBuffer.byteLength > MAX_FILE_SIZE) {
+    return json({
+      error: 'Invalid uploaded file size.',
+    }, 400)
+  }
 
   const id = crypto.randomUUID()
 
-  const folder = mediaType === 'photo' ? 'photos' : 'videos'
+  const extensionMap = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/quicktime': 'mov',
+  }
+
+  const extension = extensionMap[contentType]
+
+  const folder = mediaType === 'photo'
+    ? 'photos'
+    : 'videos'
+
   const categoryFolder = CATEGORIES[category]
 
-  const key = `${folder}/${categoryFolder}/${id}.${extension}`
+  const r2Key = `${folder}/${categoryFolder}/${id}.${extension}`
 
   try {
-    await env.MEDIA_BUCKET.put(key, request.body, {
+    // Save original media to R2.
+    await env.MEDIA_BUCKET.put(r2Key, fileBuffer, {
       httpMetadata: {
         contentType,
-        cacheControl: 'public, max-age=31536000, immutable',
       },
       customMetadata: {
+        id,
         title,
         category,
         mediaType,
       },
     })
 
-    try {
-      await env.eternalhappiness_db
-        .prepare(
-          `
-          INSERT INTO media (
-            id,
-            title,
-            description,
-            category,
-            media_type,
-            r2_key,
-            content_type,
-            size_bytes
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
+    // Save media information to D1.
+    await env.eternalhappiness_db
+      .prepare(`
+        INSERT INTO media (
+          id,
+          title,
+          description,
+          category,
+          media_type,
+          r2_key,
+          content_type,
+          size_bytes
         )
-        .bind(id, title, description, category, mediaType, key, contentType, size)
-        .run()
-    } catch (databaseError) {
-      console.error('D1 insertion error:', databaseError)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .bind(
+        id,
+        title,
+        description,
+        category,
+        mediaType,
+        r2Key,
+        contentType,
+        fileBuffer.byteLength,
+      )
+      .run()
 
-      await env.MEDIA_BUCKET.delete(key)
+    return json({
+      success: true,
+      id,
+      title,
+      media_type: mediaType,
+      media_url: getMediaUrl(r2Key),
+    }, 201)
+  } catch (error) {
+    console.error('Media upload error:', error)
 
-      throw databaseError
+    // Remove uploaded R2 file if the database insert fails.
+    try {
+      await env.MEDIA_BUCKET.delete(r2Key)
+    } catch (deleteError) {
+      console.error('R2 cleanup error:', deleteError)
     }
 
-    return json(
-      {
-        success: true,
-        message: 'Media uploaded successfully.',
-        id,
-        media_url: `/media/${key}`,
-      },
-      201,
-    )
-  } catch (error) {
-    console.error('R2 or database upload error:', {
-      message: error.message,
-      name: error.name,
-      mediaType,
-      contentType,
-      size,
-      key,
-    })
-
-    return json(
-      {
-        error: 'Upload failed. Please try again.',
-        details: error.message || 'Unknown upload error.',
-      },
-      500,
-    )
+    return json({
+      error: 'Could not save uploaded media.',
+      details: error.message,
+    }, 500)
   }
 }
 
-// DELETE MEDIA
-async function deleteMedia(request, env, id) {
-  const password = request.headers.get('X-Admin-Password')
+// --------------------------------------------------
+// UPLOAD VIDEO THUMBNAIL
+// --------------------------------------------------
 
-  const validPassword = await verifyPassword(password, env.ADMIN_PASSWORD)
+async function uploadThumbnail(request, env, id) {
+  const authorized = await requireUploadPassword(request, env)
 
-  if (!validPassword) {
-    return json({ error: 'Incorrect admin password.' }, 401)
+  if (!authorized) {
+    return json({
+      error: 'Invalid upload password.',
+    }, 401)
   }
 
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
-    return json({ error: 'Invalid media ID.' }, 400)
+  if (!validId(id)) {
+    return json({
+      error: 'Invalid media ID.',
+    }, 400)
   }
 
-  const item = await env.eternalhappiness_db
-    .prepare(
-      `
-      SELECT id, r2_key
-      FROM media
-      WHERE id = ?
-    `,
-    )
-    .bind(id)
-    .first()
+  const contentType = request.headers.get('Content-Type') || ''
+  const fileSize = Number(request.headers.get('X-File-Size') || 0)
 
-  if (!item) {
-    return json({ error: 'Media not found.' }, 404)
+  if (contentType !== 'image/jpeg') {
+    return json({
+      error: 'Thumbnail must be a JPEG image.',
+    }, 400)
+  }
+
+  if (!fileSize || fileSize > MAX_THUMBNAIL_SIZE) {
+    return json({
+      error: 'Thumbnail must not exceed 2 MB.',
+    }, 400)
   }
 
   try {
-    // Delete the actual file from R2.
-    await env.MEDIA_BUCKET.delete(item.r2_key)
+    const media = await env.eternalhappiness_db
+      .prepare(`
+        SELECT id, media_type
+        FROM media
+        WHERE id = ?
+      `)
+      .bind(id)
+      .first()
 
-    // Delete the corresponding database record.
-    await env.eternalhappiness_db.prepare('DELETE FROM media WHERE id = ?').bind(id).run()
+    if (!media) {
+      return json({
+        error: 'Media not found.',
+      }, 404)
+    }
+
+    if (media.media_type !== 'video') {
+      return json({
+        error: 'Thumbnails can only be added to videos.',
+      }, 400)
+    }
+
+    const thumbnailBuffer = await request.arrayBuffer()
+
+    if (
+      !thumbnailBuffer.byteLength ||
+      thumbnailBuffer.byteLength > MAX_THUMBNAIL_SIZE
+    ) {
+      return json({
+        error: 'Invalid thumbnail size.',
+      }, 400)
+    }
+
+    const thumbnailKey = `thumbnails/${id}.jpg`
+
+    await env.MEDIA_BUCKET.put(thumbnailKey, thumbnailBuffer, {
+      httpMetadata: {
+        contentType: 'image/jpeg',
+        cacheControl: 'public, max-age=31536000, immutable',
+      },
+    })
+
+    await env.eternalhappiness_db
+      .prepare(`
+        UPDATE media
+        SET thumbnail_key = ?
+        WHERE id = ?
+      `)
+      .bind(thumbnailKey, id)
+      .run()
+
+    return json({
+      success: true,
+      id,
+      thumbnail_url: getMediaUrl(thumbnailKey),
+    })
+  } catch (error) {
+    console.error('Thumbnail upload error:', error)
+
+    return json({
+      error: 'Could not save video thumbnail.',
+      details: error.message,
+    }, 500)
+  }
+}
+
+// --------------------------------------------------
+// GET FEATURED VIDEO
+// --------------------------------------------------
+
+async function getFeaturedVideo(env) {
+  try {
+    const setting = await env.eternalhappiness_db
+      .prepare(`
+        SELECT setting_value
+        FROM site_settings
+        WHERE setting_key = 'featured_video_id'
+      `)
+      .first()
+
+    if (!setting) {
+      return json({
+        video: null,
+      })
+    }
+
+    const video = await env.eternalhappiness_db
+      .prepare(`
+        SELECT
+          id,
+          title,
+          description,
+          category,
+          media_type,
+          r2_key,
+          thumbnail_key,
+          content_type,
+          size_bytes,
+          created_at
+        FROM media
+        WHERE id = ?
+        AND media_type = 'video'
+      `)
+      .bind(setting.setting_value)
+      .first()
+
+    if (!video) {
+      return json({
+        video: null,
+      })
+    }
+
+    return json({
+      video: {
+        id: video.id,
+        title: video.title,
+        description: video.description,
+        category: video.category,
+        media_type: video.media_type,
+        media_url: getMediaUrl(video.r2_key),
+        thumbnail_url: video.thumbnail_key
+          ? getMediaUrl(video.thumbnail_key)
+          : null,
+        content_type: video.content_type,
+        size_bytes: video.size_bytes,
+        created_at: video.created_at,
+      },
+    })
+  } catch (error) {
+    console.error('Get featured video error:', error)
+
+    return json({
+      error: 'Could not retrieve featured video.',
+    }, 500)
+  }
+}
+
+// --------------------------------------------------
+// SET FEATURED VIDEO
+// --------------------------------------------------
+
+async function setFeaturedVideo(request, env) {
+  const authorized = await requireAdminPassword(request, env)
+
+  if (!authorized) {
+    return json({
+      error: 'Invalid admin password.',
+    }, 401)
+  }
+
+  let body
+
+  try {
+    body = await request.json()
+  } catch {
+    return json({
+      error: 'Invalid JSON request.',
+    }, 400)
+  }
+
+  const id = body?.id
+
+  if (!validId(id)) {
+    return json({
+      error: 'A valid video ID is required.',
+    }, 400)
+  }
+
+  try {
+    const video = await env.eternalhappiness_db
+      .prepare(`
+        SELECT id
+        FROM media
+        WHERE id = ?
+        AND media_type = 'video'
+      `)
+      .bind(id)
+      .first()
+
+    if (!video) {
+      return json({
+        error: 'Selected video was not found.',
+      }, 404)
+    }
+
+    await env.eternalhappiness_db
+      .prepare(`
+        INSERT INTO site_settings (
+          setting_key,
+          setting_value,
+          updated_at
+        )
+        VALUES (
+          'featured_video_id',
+          ?,
+          CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(setting_key)
+        DO UPDATE SET
+          setting_value = excluded.setting_value,
+          updated_at = CURRENT_TIMESTAMP
+      `)
+      .bind(id)
+      .run()
+
+    return json({
+      success: true,
+      featured_video_id: id,
+    })
+  } catch (error) {
+    console.error('Set featured video error:', error)
+
+    return json({
+      error: 'Could not update featured video.',
+      details: error.message,
+    }, 500)
+  }
+}
+
+// --------------------------------------------------
+// DELETE MEDIA
+// --------------------------------------------------
+
+async function deleteMedia(request, env, id) {
+  const authorized = await requireAdminPassword(request, env)
+
+  if (!authorized) {
+    return json({
+      error: 'Invalid admin password.',
+    }, 401)
+  }
+
+  if (!validId(id)) {
+    return json({
+      error: 'Invalid media ID.',
+    }, 400)
+  }
+
+  try {
+    const media = await env.eternalhappiness_db
+      .prepare(`
+        SELECT id, r2_key, thumbnail_key
+        FROM media
+        WHERE id = ?
+      `)
+      .bind(id)
+      .first()
+
+    if (!media) {
+      return json({
+        error: 'Media not found.',
+      }, 404)
+    }
+
+    // Delete original file from R2.
+    await env.MEDIA_BUCKET.delete(media.r2_key)
+
+    // Delete thumbnail if one exists.
+    if (media.thumbnail_key) {
+      await env.MEDIA_BUCKET.delete(media.thumbnail_key)
+    }
+
+    // Remove featured setting if this was the featured video.
+    await env.eternalhappiness_db
+      .prepare(`
+        DELETE FROM site_settings
+        WHERE setting_key = 'featured_video_id'
+        AND setting_value = ?
+      `)
+      .bind(id)
+      .run()
+
+    // Delete D1 record.
+    await env.eternalhappiness_db
+      .prepare(`
+        DELETE FROM media
+        WHERE id = ?
+      `)
+      .bind(id)
+      .run()
 
     return json({
       success: true,
       message: 'Media deleted successfully.',
-      id,
     })
   } catch (error) {
-    console.error('Media deletion error:', {
-      id,
-      r2_key: item.r2_key,
-      message: error.message,
-    })
+    console.error('Delete media error:', error)
 
-    return json(
-      {
-        error: 'Unable to complete media deletion.',
-        details: error.message || 'Unknown deletion error.',
-      },
-      500,
-    )
+    return json({
+      error: 'Could not delete media.',
+      details: error.message,
+    }, 500)
   }
 }
 
+// --------------------------------------------------
 // SERVE MEDIA FROM R2
+// Supports GET, HEAD, and video byte-range requests.
+// --------------------------------------------------
+
 async function serveMedia(request, env) {
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
-    return new Response('Method not allowed', {
-      status: 405,
-    })
-  }
+  const url = new URL(request.url)
 
   let key
 
   try {
-    key = new URL(request.url).pathname
-      .slice('/media/'.length)
+    key = url.pathname
+      .replace(/^\/media\//, '')
       .split('/')
-      .map(decodeURIComponent)
+      .map((segment) => decodeURIComponent(segment))
       .join('/')
   } catch {
-    return new Response('Invalid media path', {
+    return new Response('Invalid media path.', {
       status: 400,
     })
   }
 
   if (!key || key.includes('..')) {
-    return new Response('Invalid media path', {
+    return new Response('Invalid media path.', {
       status: 400,
     })
   }
 
-  const object = await env.MEDIA_BUCKET.get(key)
+  try {
+    let object
+    let status = 200
 
-  if (!object) {
-    return new Response('Media not found', {
-      status: 404,
+    const rangeHeader = request.headers.get('Range')
+
+    if (rangeHeader) {
+      const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/)
+
+      if (!match) {
+        return new Response('Invalid range request.', {
+          status: 416,
+        })
+      }
+
+      const start = match[1] ? Number(match[1]) : null
+      const end = match[2] ? Number(match[2]) : null
+
+      const fullObject = await env.MEDIA_BUCKET.head(key)
+
+      if (!fullObject) {
+        return new Response('Media not found.', {
+          status: 404,
+        })
+      }
+
+      const totalSize = fullObject.size
+
+      let offset
+      let length
+
+      if (start === null) {
+        if (!end || end <= 0) {
+          return new Response('Invalid range.', {
+            status: 416,
+          })
+        }
+
+        length = Math.min(end, totalSize)
+        offset = totalSize - length
+      } else {
+        offset = start
+        const finalByte = end === null
+          ? totalSize - 1
+          : Math.min(end, totalSize - 1)
+
+        if (
+          offset >= totalSize ||
+          finalByte < offset
+        ) {
+          return new Response('Range not satisfiable.', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${totalSize}`,
+            },
+          })
+        }
+
+        length = finalByte - offset + 1
+      }
+
+      object = await env.MEDIA_BUCKET.get(key, {
+        range: {
+          offset,
+          length,
+        },
+      })
+
+      if (!object) {
+        return new Response('Media not found.', {
+          status: 404,
+        })
+      }
+
+      status = 206
+
+      const headers = new Headers()
+
+      object.writeHttpMetadata(headers)
+
+      headers.set('Accept-Ranges', 'bytes')
+      headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${totalSize}`)
+      headers.set('Content-Length', String(length))
+      headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+
+      if (!headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/octet-stream')
+      }
+
+      return new Response(
+        request.method === 'HEAD' ? null : object.body,
+        {
+          status,
+          headers,
+        },
+      )
+    }
+
+    object = await env.MEDIA_BUCKET.get(key)
+
+    if (!object) {
+      return new Response('Media not found.', {
+        status: 404,
+      })
+    }
+
+    const headers = new Headers()
+
+    object.writeHttpMetadata(headers)
+
+    headers.set('Accept-Ranges', 'bytes')
+    headers.set('Content-Length', String(object.size))
+    headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/octet-stream')
+    }
+
+    return new Response(
+      request.method === 'HEAD' ? null : object.body,
+      {
+        status: 200,
+        headers,
+      },
+    )
+  } catch (error) {
+    console.error('Serve media error:', error)
+
+    return new Response('Could not retrieve media.', {
+      status: 500,
     })
   }
-
-  const headers = new Headers()
-
-  object.writeHttpMetadata(headers)
-
-  headers.set('ETag', object.httpEtag)
-  headers.set('Cache-Control', 'public, max-age=31536000, immutable')
-  headers.set('X-Content-Type-Options', 'nosniff')
-
-  return new Response(request.method === 'HEAD' ? null : object.body, { headers })
 }
 
-// MAIN WORKER
+// --------------------------------------------------
+// MAIN WORKER ROUTER
+// --------------------------------------------------
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
+    const path = url.pathname
+    const method = request.method
 
     try {
-      if (url.pathname === '/api/media' && request.method === 'GET') {
+      // GET media list.
+      if (
+        path === '/api/media' &&
+        method === 'GET'
+      ) {
         return await getMedia(request, env)
       }
 
-      if (url.pathname === '/api/upload' && request.method === 'POST') {
+      // Upload photo or video.
+      if (
+        path === '/api/upload' &&
+        method === 'POST'
+      ) {
         return await uploadMedia(request, env)
       }
 
-      const deleteMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/)
-
-      if (deleteMatch && request.method === 'DELETE') {
-        let id
-
-        try {
-          id = decodeURIComponent(deleteMatch[1])
-        } catch {
-          return json({ error: 'Invalid media ID.' }, 400)
-        }
-
-        return await deleteMedia(request, env, id)
+      // Get currently selected featured video.
+      if (
+        path === '/api/featured' &&
+        method === 'GET'
+      ) {
+        return await getFeaturedVideo(env)
       }
 
-      if (url.pathname.startsWith('/api/')) {
-        return json(
-          {
-            error: 'API endpoint not found.',
-          },
-          404,
+      // Set featured video.
+      if (
+        path === '/api/featured' &&
+        method === 'POST'
+      ) {
+        return await setFeaturedVideo(request, env)
+      }
+
+      // Upload a video thumbnail.
+      const thumbnailMatch = path.match(
+        /^\/api\/media\/([^/]+)\/thumbnail$/,
+      )
+
+      if (
+        thumbnailMatch &&
+        method === 'POST'
+      ) {
+        return await uploadThumbnail(
+          request,
+          env,
+          thumbnailMatch[1],
         )
       }
 
-      if (url.pathname.startsWith('/media/')) {
+      // Delete media.
+      const deleteMatch = path.match(
+        /^\/api\/media\/([^/]+)$/,
+      )
+
+      if (
+        deleteMatch &&
+        method === 'DELETE'
+      ) {
+        return await deleteMedia(
+          request,
+          env,
+          deleteMatch[1],
+        )
+      }
+
+      // Serve R2 media.
+      if (
+        path.startsWith('/media/') &&
+        ['GET', 'HEAD'].includes(method)
+      ) {
         return await serveMedia(request, env)
       }
 
-      return env.ASSETS.fetch(request)
-    } catch (error) {
-      console.error('Worker error:', {
-        message: error.message,
-        name: error.name,
-        path: url.pathname,
-      })
+      // Serve frontend assets.
+      if (env.ASSETS) {
+        return env.ASSETS.fetch(request)
+      }
 
-      return json(
-        {
-          error: 'Internal server error.',
-          details: error.message || 'Unknown error.',
-        },
-        500,
-      )
+      return new Response('Not found.', {
+        status: 404,
+      })
+    } catch (error) {
+      console.error('Worker error:', error)
+
+      return json({
+        error: 'Internal server error.',
+      }, 500)
     }
   },
 }
