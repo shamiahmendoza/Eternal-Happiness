@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   mediaType: {
@@ -31,16 +31,85 @@ const acceptedFiles = computed(() =>
     : 'video/mp4,video/webm,video/quicktime',
 )
 
-const filePreview = computed(() => {
-  if (!selectedFile.value) return ''
-
-  return URL.createObjectURL(selectedFile.value)
-})
+const filePreview = ref('')
 
 function selectFile(event) {
+  // Release the previous preview URL.
+  if (filePreview.value) {
+    URL.revokeObjectURL(filePreview.value)
+  }
+
   selectedFile.value = event.target.files[0] || null
+
+  filePreview.value =
+    selectedFile.value && isPhoto.value ? URL.createObjectURL(selectedFile.value) : ''
+
   message.value = ''
   error.value = ''
+  progress.value = 0
+}
+
+onBeforeUnmount(() => {
+  if (filePreview.value) {
+    URL.revokeObjectURL(filePreview.value)
+  }
+})
+
+// Upload using XMLHttpRequest.
+function sendUpload(file) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+
+    xhr.open('POST', '/api/upload', true)
+
+    xhr.timeout = 120000
+    xhr.responseType = 'json'
+
+    xhr.setRequestHeader('Content-Type', file.type)
+    xhr.setRequestHeader('X-Upload-Password', password.value)
+    xhr.setRequestHeader('X-File-Size', String(file.size))
+
+    xhr.setRequestHeader('X-Title', encodeURIComponent(title.value.trim()))
+
+    xhr.setRequestHeader('X-Description', encodeURIComponent(description.value.trim()))
+
+    xhr.setRequestHeader('X-Category', encodeURIComponent(category.value))
+
+    // Actual upload progress.
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        progress.value = Math.round((event.loaded / event.total) * 100)
+      }
+    }
+
+    xhr.onload = () => {
+      const result = xhr.response
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(result)
+      } else {
+        reject(
+          new Error(
+            result?.details || result?.error || `Upload failed. HTTP status: ${xhr.status}`,
+          ),
+        )
+      }
+    }
+
+    xhr.onerror = () => {
+      reject(new Error('Network error while uploading. The server could not be reached.'))
+    }
+
+    xhr.ontimeout = () => {
+      reject(new Error('Upload timed out. Please try again.'))
+    }
+
+    xhr.onabort = () => {
+      reject(new Error('Upload was cancelled.'))
+    }
+
+    xhr.send(file)
+  })
 }
 
 async function uploadMedia() {
@@ -78,27 +147,9 @@ async function uploadMedia() {
   uploading.value = true
 
   try {
-    const response = await fetch('/api/upload', {
-      method: 'POST',
-      headers: {
-        'Content-Type': file.type,
-        'X-Upload-Password': password.value,
-        'X-File-Size': String(file.size),
-        'X-Title': encodeURIComponent(title.value.trim()),
-        'X-Description': encodeURIComponent(description.value.trim()),
-        'X-Category': encodeURIComponent(category.value),
-      },
-      body: file,
-    })
-
-    const result = await response.json()
-
-    if (!response.ok) {
-      throw new Error(result.error || 'Upload failed.')
-    }
+    const result = await sendUpload(file)
 
     message.value = 'Media uploaded successfully!'
-
     progress.value = 100
 
     emit('uploaded', result)
@@ -107,6 +158,12 @@ async function uploadMedia() {
     title.value = ''
     description.value = ''
     category.value = 'Event'
+
+    if (filePreview.value) {
+      URL.revokeObjectURL(filePreview.value)
+      filePreview.value = ''
+    }
+
     selectedFile.value = null
   } catch (err) {
     error.value = err.message || 'Something went wrong.'
@@ -217,6 +274,21 @@ async function uploadMedia() {
               {{ item }}
             </option>
           </select>
+        </div>
+
+        <!-- Upload Progress -->
+        <div v-if="uploading">
+          <div class="mb-2 flex justify-between text-xs text-gray-500">
+            <span>Uploading...</span>
+            <span>{{ progress }}%</span>
+          </div>
+
+          <div class="h-2 w-full overflow-hidden bg-[#DCD9E8]">
+            <div
+              class="h-full bg-[#393970] transition-all duration-200"
+              :style="{ width: `${progress}%` }"
+            ></div>
+          </div>
         </div>
 
         <!-- Messages -->

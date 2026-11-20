@@ -1,6 +1,6 @@
-
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import PhotoHeader from './components/PhotoHeader.vue'
 import PhotoToolbar from './components/PhotoToolbar.vue'
@@ -8,31 +8,45 @@ import PhotoGallery from './components/PhotoGallery.vue'
 import PhotoCTA from './components/PhotoCTA.vue'
 import PhotoUpload from '../../component/PhotoUpload.vue'
 
-const categories = [
-  'All photos',
-  'Event',
-  'Ministry',
-  'Shared meals',
-  'Manila'
-]
+const route = useRoute()
+
+// Categories
+const categories = ['All photos', 'Event', 'Ministry', 'Shared meals', 'Manila']
+
+// Photo data
+const photos = ref([])
 
 const search = ref('')
 const activeCategory = ref('All photos')
-const sortOrder = ref('default')
+const sortOrder = ref('newest')
 
-const photos = ref([])
-const loading = ref(true)
+const loading = ref(false)
 const loadError = ref('')
 
-function formatDate(date) {
-  return new Date(date).toLocaleDateString('en-US', {
+// Admin controls
+const adminMode = ref(false)
+const adminPassword = ref('')
+const deletingId = ref(null)
+const deleteError = ref('')
+const deleteMessage = ref('')
+
+// Format date
+const formatDate = (dateValue) => {
+  if (!dateValue) return ''
+
+  const date = new Date(dateValue)
+
+  if (Number.isNaN(date.getTime())) return ''
+
+  return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
   })
 }
 
-async function fetchPhotos() {
+// Fetch photos from the Worker API
+const fetchPhotos = async () => {
   loading.value = true
   loadError.value = ''
 
@@ -45,93 +59,255 @@ async function fetchPhotos() {
 
     const result = await response.json()
 
-    photos.value = result.items.map(item => ({
+    photos.value = (result.items || []).map((item) => ({
       id: item.id,
       title: item.title,
       description: item.description,
       category: item.category,
       date: formatDate(item.created_at),
-      image: item.media_url
+      image: item.media_url,
+      createdAt: item.created_at,
     }))
   } catch (error) {
-    loadError.value = error.message
+    console.error('Error fetching photos:', error)
+    loadError.value = 'Unable to load photos. Please try again.'
   } finally {
     loading.value = false
   }
 }
 
-function handleUpload() {
+// Refresh photos after uploading
+const handleUpload = () => {
   fetchPhotos()
 }
 
+// Search, filter, and sort photos
 const filteredPhotos = computed(() => {
-  let result = photos.value.filter(photo => {
-    const matchesCategory =
-      activeCategory.value === 'All photos' ||
-      photo.category === activeCategory.value
+  let result = [...photos.value]
 
-    const searchTerm = search.value.toLowerCase().trim()
+  if (activeCategory.value !== 'All photos') {
+    result = result.filter((photo) => photo.category === activeCategory.value)
+  }
 
-    const matchesSearch =
-      photo.title.toLowerCase().includes(searchTerm) ||
-      photo.category.toLowerCase().includes(searchTerm)
+  if (search.value.trim()) {
+    const keyword = search.value.toLowerCase()
 
-    return matchesCategory && matchesSearch
+    result = result.filter((photo) =>
+      [photo.title, photo.description, photo.category]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(keyword)),
+    )
+  }
+
+  result.sort((a, b) => {
+    const dateA = new Date(a.createdAt || 0).getTime()
+    const dateB = new Date(b.createdAt || 0).getTime()
+
+    return sortOrder.value === 'oldest' ? dateA - dateB : dateB - dateA
   })
-
-  if (sortOrder.value === 'az') {
-    result.sort((a, b) => a.title.localeCompare(b.title))
-  }
-
-  if (sortOrder.value === 'newest') {
-    result.sort((a, b) => new Date(b.date) - new Date(a.date))
-  }
-
-  if (sortOrder.value === 'oldest') {
-    result.sort((a, b) => new Date(a.date) - new Date(b.date))
-  }
 
   return result
 })
 
-onMounted(fetchPhotos)
+// Open or close admin mode through the footer URL
+watch(
+  () => route.query.admin,
+  (value) => {
+    adminMode.value = value === '1'
+
+    if (!adminMode.value) {
+      adminPassword.value = ''
+      deleteError.value = ''
+      deleteMessage.value = ''
+    }
+  },
+  { immediate: true },
+)
+
+// Delete a photo
+const deletePhoto = async (photo) => {
+  deleteError.value = ''
+  deleteMessage.value = ''
+
+  if (!adminPassword.value.trim()) {
+    deleteError.value = 'Please enter the admin password.'
+    return
+  }
+
+  const confirmed = window.confirm(`Are you sure you want to permanently delete "${photo.title}"?`)
+
+  if (!confirmed) return
+
+  deletingId.value = photo.id
+
+  try {
+    const response = await fetch(`/api/media/${encodeURIComponent(photo.id)}`, {
+      method: 'DELETE',
+      headers: {
+        'X-Admin-Password': adminPassword.value,
+      },
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to delete photo.')
+    }
+
+    photos.value = photos.value.filter((item) => item.id !== photo.id)
+
+    deleteMessage.value = `"${photo.title}" was deleted successfully.`
+  } catch (error) {
+    console.error('Delete error:', error)
+    deleteError.value = error.message || 'Unable to delete photo.'
+  } finally {
+    deletingId.value = null
+  }
+}
+
+// Load photos when the page opens
+onMounted(() => {
+  fetchPhotos()
+})
 </script>
 
 <template>
-  <div>
+  <main class="min-h-screen bg-white">
+    <!-- Page Header -->
     <PhotoHeader />
 
-    <PhotoUpload
-      media-type="photo"
-      @uploaded="handleUpload"
-    />
+    <!-- Upload Section -->
+    <section class="mx-auto max-w-7xl px-6 py-8 md:px-10">
+      <PhotoUpload media-type="photo" @uploaded="handleUpload" />
+    </section>
 
-    <PhotoToolbar
-      :categories="categories"
-      :search="search"
-      :active-category="activeCategory"
-      :sort-order="sortOrder"
-      @update:search="search = $event"
-      @update:active-category="activeCategory = $event"
-      @update:sort-order="sortOrder = $event"
-    />
+    <!-- Admin Management Panel -->
+    <section v-if="adminMode" class="mx-auto max-w-7xl px-6 pb-8 md:px-10">
+      <div class="rounded-xl border border-gray-200 bg-gray-50 p-5 md:p-7">
+        <div class="mb-5 flex items-center justify-between gap-4">
+          <div>
+            <h2 class="text-lg font-semibold text-gray-800">Photo Management</h2>
+            <p class="mt-1 text-sm text-gray-500">Manage and delete uploaded photos.</p>
+          </div>
 
-    <div v-if="loading" class="bg-[#FAF9F4] py-16 text-center text-sm text-gray-500">
+          <button
+            type="button"
+            @click="$router.push('/photos')"
+            class="text-sm text-gray-500 transition hover:text-red-600"
+          >
+            Close
+          </button>
+        </div>
+
+        <!-- Admin Password -->
+        <div class="mb-5">
+          <label for="adminPassword" class="mb-2 block text-sm font-medium text-gray-700">
+            Admin Password
+          </label>
+
+          <input
+            id="adminPassword"
+            v-model="adminPassword"
+            type="password"
+            placeholder="Enter admin password"
+            autocomplete="current-password"
+            class="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+          />
+        </div>
+
+        <!-- Error Message -->
+        <p v-if="deleteError" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">
+          {{ deleteError }}
+        </p>
+
+        <!-- Success Message -->
+        <p
+          v-if="deleteMessage"
+          class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700"
+        >
+          {{ deleteMessage }}
+        </p>
+
+        <!-- Photo Count -->
+        <div class="mb-4 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-gray-700">Uploaded Photos</h3>
+
+          <span class="text-xs text-gray-500"> {{ photos.length }} photos </span>
+        </div>
+
+        <!-- Photo List -->
+        <div v-if="photos.length" class="space-y-3">
+          <div
+            v-for="photo in photos"
+            :key="photo.id"
+            class="flex items-center gap-4 rounded-lg border border-gray-200 bg-white p-3"
+          >
+            <img
+              :src="photo.image"
+              :alt="photo.title"
+              class="h-16 w-16 shrink-0 rounded-lg object-cover"
+            />
+
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm font-medium text-gray-800">
+                {{ photo.title }}
+              </p>
+
+              <p class="mt-1 text-xs text-gray-500">{{ photo.category }} · {{ photo.date }}</p>
+            </div>
+
+            <button
+              type="button"
+              @click="deletePhoto(photo)"
+              :disabled="deletingId === photo.id"
+              class="shrink-0 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {{ deletingId === photo.id ? 'Deleting...' : 'Delete' }}
+            </button>
+          </div>
+        </div>
+
+        <p v-else class="rounded-lg bg-white p-5 text-center text-sm text-gray-500">
+          No photos available.
+        </p>
+      </div>
+    </section>
+
+    <!-- Loading -->
+    <div v-if="loading" class="mx-auto max-w-7xl px-6 py-10 text-center text-sm text-gray-500">
       Loading photos...
     </div>
 
-    <div v-else-if="loadError" class="bg-[#FAF9F4] py-16 text-center text-sm text-red-600">
-      {{ loadError }}
-      <button @click="fetchPhotos" class="ml-2 underline">
+    <!-- Loading Error -->
+    <div v-else-if="loadError" class="mx-auto max-w-7xl px-6 py-10 text-center">
+      <p class="text-sm text-red-600">
+        {{ loadError }}
+      </p>
+
+      <button
+        type="button"
+        @click="fetchPhotos"
+        class="mt-3 text-sm font-medium text-indigo-600 hover:underline"
+      >
         Try again
       </button>
     </div>
 
-    <PhotoGallery
-      v-else
-      :photos="filteredPhotos"
-    />
+    <!-- Gallery -->
+    <template v-else>
+      <PhotoToolbar
+        :categories="categories"
+        :search="search"
+        :active-category="activeCategory"
+        :sort-order="sortOrder"
+        @update:search="search = $event"
+        @update:active-category="activeCategory = $event"
+        @update:sort-order="sortOrder = $event"
+      />
 
-    <PhotoCTA />
-  </div>
+      <PhotoGallery :photos="filteredPhotos" />
+
+      <PhotoCTA />
+    </template>
+  </main>
 </template>

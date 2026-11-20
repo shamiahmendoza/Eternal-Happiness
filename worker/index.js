@@ -1,11 +1,10 @@
-
 const MAX_FILE_SIZE = 90 * 1024 * 1024
 
 const CATEGORIES = {
   Event: 'event',
   Ministry: 'ministry',
   'Shared meals': 'shared-meals',
-  Manila: 'manila'
+  Manila: 'manila',
 }
 
 const ALLOWED_TYPES = {
@@ -15,7 +14,7 @@ const ALLOWED_TYPES = {
   'image/gif': 'gif',
   'video/mp4': 'mp4',
   'video/webm': 'webm',
-  'video/quicktime': 'mov'
+  'video/quicktime': 'mov',
 }
 
 function json(data, status = 200) {
@@ -23,8 +22,8 @@ function json(data, status = 200) {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Cache-Control': 'no-store'
-    }
+      'Cache-Control': 'no-store',
+    },
   })
 }
 
@@ -43,7 +42,7 @@ async function verifyPassword(input, expected) {
 
   const [inputHash, expectedHash] = await Promise.all([
     crypto.subtle.digest('SHA-256', encoder.encode(input)),
-    crypto.subtle.digest('SHA-256', encoder.encode(expected))
+    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
   ])
 
   const a = new Uint8Array(inputHash)
@@ -106,12 +105,9 @@ async function getMedia(request, env) {
     .bind(...params)
     .all()
 
-  const items = (result.results || []).map(item => ({
+  const items = (result.results || []).map((item) => ({
     ...item,
-    media_url: `/media/${item.r2_key
-      .split('/')
-      .map(encodeURIComponent)
-      .join('/')}`
+    media_url: `/media/${item.r2_key.split('/').map(encodeURIComponent).join('/')}`,
   }))
 
   return json({ items })
@@ -120,49 +116,48 @@ async function getMedia(request, env) {
 async function uploadMedia(request, env) {
   const password = request.headers.get('X-Upload-Password')
 
-  const validPassword = await verifyPassword(
-    password,
-    env.UPLOAD_PASSWORD
-  )
+  const validPassword = await verifyPassword(password, env.UPLOAD_PASSWORD)
 
   if (!validPassword) {
     return json({ error: 'Incorrect upload password.' }, 401)
   }
 
-  const contentType = request.headers.get('Content-Type') || ''
+  const contentType = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase()
+
   const extension = ALLOWED_TYPES[contentType]
 
   if (!extension) {
     return json({ error: 'Unsupported file type.' }, 400)
   }
 
-  const category = decodeHeader(
-    request.headers.get('X-Category') || ''
-  )
+  const category = decodeHeader(request.headers.get('X-Category') || '')
 
   if (!category || !Object.hasOwn(CATEGORIES, category)) {
     return json({ error: 'Invalid category.' }, 400)
   }
 
-  const title = decodeHeader(
-    request.headers.get('X-Title') || ''
-  )
+  const title = decodeHeader(request.headers.get('X-Title') || '')
 
-  const description = decodeHeader(
-    request.headers.get('X-Description') || ''
-  )
+  const description = decodeHeader(request.headers.get('X-Description') || '')
 
   if (title === null || !title || title.length > 150) {
-    return json({
-      error: 'Title is required (maximum 150 characters).'
-    }, 400)
+    return json(
+      {
+        error: 'Title is required (maximum 150 characters).',
+      },
+      400,
+    )
   }
 
   if (description === null || description.length > 1000) {
-    return json({ error: 'Description is too long or invalid.' }, 400)
+    return json(
+      {
+        error: 'Description is too long or invalid.',
+      },
+      400,
+    )
   }
 
-  // Validate the file size supplied by the frontend.
   const size = Number(request.headers.get('X-File-Size'))
 
   if (!Number.isSafeInteger(size) || size <= 0) {
@@ -170,18 +165,19 @@ async function uploadMedia(request, env) {
   }
 
   if (size > MAX_FILE_SIZE) {
-    return json({
-      error: 'File exceeds the 90 MB upload limit.'
-    }, 413)
+    return json(
+      {
+        error: 'File exceeds the 90 MB upload limit.',
+      },
+      413,
+    )
   }
 
   if (!request.body) {
     return json({ error: 'No file was provided.' }, 400)
   }
 
-  const mediaType = contentType.startsWith('image/')
-    ? 'photo'
-    : 'video'
+  const mediaType = contentType.startsWith('image/') ? 'photo' : 'video'
 
   const id = crypto.randomUUID()
 
@@ -191,23 +187,22 @@ async function uploadMedia(request, env) {
   const key = `${folder}/${categoryFolder}/${id}.${extension}`
 
   try {
-    // Upload the original file to R2.
     await env.MEDIA_BUCKET.put(key, request.body, {
       httpMetadata: {
         contentType,
-        cacheControl: 'public, max-age=31536000, immutable'
+        cacheControl: 'public, max-age=31536000, immutable',
       },
       customMetadata: {
         title,
         category,
-        mediaType
-      }
+        mediaType,
+      },
     })
 
     try {
-      // Register the uploaded file in D1.
       await env.eternalhappiness_db
-        .prepare(`
+        .prepare(
+          `
           INSERT INTO media (
             id,
             title,
@@ -219,43 +214,111 @@ async function uploadMedia(request, env) {
             size_bytes
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        .bind(
-          id,
-          title,
-          description,
-          category,
-          mediaType,
-          key,
-          contentType,
-          size
+        `,
         )
+        .bind(id, title, description, category, mediaType, key, contentType, size)
         .run()
     } catch (databaseError) {
-      // Remove the R2 file if its database record fails.
+      console.error('D1 insertion error:', databaseError)
+
       await env.MEDIA_BUCKET.delete(key)
+
       throw databaseError
     }
 
-    return json({
-      success: true,
-      message: 'Media uploaded successfully.',
-      id,
-      media_url: `/media/${key}`
-    }, 201)
-
+    return json(
+      {
+        success: true,
+        message: 'Media uploaded successfully.',
+        id,
+        media_url: `/media/${key}`,
+      },
+      201,
+    )
   } catch (error) {
-    console.error('Upload error:', error)
+    console.error('R2 or database upload error:', {
+      message: error.message,
+      name: error.name,
+      mediaType,
+      contentType,
+      size,
+      key,
+    })
 
-    return json({
-      error: 'Upload failed. Please try again.'
-    }, 500)
+    return json(
+      {
+        error: 'Upload failed. Please try again.',
+        details: error.message || 'Unknown upload error.',
+      },
+      500,
+    )
   }
 }
 
+// DELETE MEDIA
+async function deleteMedia(request, env, id) {
+  const password = request.headers.get('X-Admin-Password')
+
+  const validPassword = await verifyPassword(password, env.ADMIN_PASSWORD)
+
+  if (!validPassword) {
+    return json({ error: 'Incorrect admin password.' }, 401)
+  }
+
+  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+    return json({ error: 'Invalid media ID.' }, 400)
+  }
+
+  const item = await env.eternalhappiness_db
+    .prepare(
+      `
+      SELECT id, r2_key
+      FROM media
+      WHERE id = ?
+    `,
+    )
+    .bind(id)
+    .first()
+
+  if (!item) {
+    return json({ error: 'Media not found.' }, 404)
+  }
+
+  try {
+    // Delete the actual file from R2.
+    await env.MEDIA_BUCKET.delete(item.r2_key)
+
+    // Delete the corresponding database record.
+    await env.eternalhappiness_db.prepare('DELETE FROM media WHERE id = ?').bind(id).run()
+
+    return json({
+      success: true,
+      message: 'Media deleted successfully.',
+      id,
+    })
+  } catch (error) {
+    console.error('Media deletion error:', {
+      id,
+      r2_key: item.r2_key,
+      message: error.message,
+    })
+
+    return json(
+      {
+        error: 'Unable to complete media deletion.',
+        details: error.message || 'Unknown deletion error.',
+      },
+      500,
+    )
+  }
+}
+
+// SERVE MEDIA FROM R2
 async function serveMedia(request, env) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
-    return new Response('Method not allowed', { status: 405 })
+    return new Response('Method not allowed', {
+      status: 405,
+    })
   }
 
   let key
@@ -267,17 +330,23 @@ async function serveMedia(request, env) {
       .map(decodeURIComponent)
       .join('/')
   } catch {
-    return new Response('Invalid media path', { status: 400 })
+    return new Response('Invalid media path', {
+      status: 400,
+    })
   }
 
   if (!key || key.includes('..')) {
-    return new Response('Invalid media path', { status: 400 })
+    return new Response('Invalid media path', {
+      status: 400,
+    })
   }
 
   const object = await env.MEDIA_BUCKET.get(key)
 
   if (!object) {
-    return new Response('Media not found', { status: 404 })
+    return new Response('Media not found', {
+      status: 404,
+    })
   }
 
   const headers = new Headers()
@@ -288,12 +357,10 @@ async function serveMedia(request, env) {
   headers.set('Cache-Control', 'public, max-age=31536000, immutable')
   headers.set('X-Content-Type-Options', 'nosniff')
 
-  return new Response(
-    request.method === 'HEAD' ? null : object.body,
-    { headers }
-  )
+  return new Response(request.method === 'HEAD' ? null : object.body, { headers })
 }
 
+// MAIN WORKER
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
@@ -307,8 +374,27 @@ export default {
         return await uploadMedia(request, env)
       }
 
+      const deleteMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/)
+
+      if (deleteMatch && request.method === 'DELETE') {
+        let id
+
+        try {
+          id = decodeURIComponent(deleteMatch[1])
+        } catch {
+          return json({ error: 'Invalid media ID.' }, 400)
+        }
+
+        return await deleteMedia(request, env, id)
+      }
+
       if (url.pathname.startsWith('/api/')) {
-        return json({ error: 'API endpoint not found.' }, 404)
+        return json(
+          {
+            error: 'API endpoint not found.',
+          },
+          404,
+        )
       }
 
       if (url.pathname.startsWith('/media/')) {
@@ -316,10 +402,20 @@ export default {
       }
 
       return env.ASSETS.fetch(request)
-
     } catch (error) {
-      console.error('Worker error:', error)
-      return json({ error: 'Internal server error.' }, 500)
+      console.error('Worker error:', {
+        message: error.message,
+        name: error.name,
+        path: url.pathname,
+      })
+
+      return json(
+        {
+          error: 'Internal server error.',
+          details: error.message || 'Unknown error.',
+        },
+        500,
+      )
     }
-  }
+  },
 }
