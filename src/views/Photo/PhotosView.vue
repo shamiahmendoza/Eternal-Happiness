@@ -1,13 +1,13 @@
+
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
 import PhotoHeader from './components/PhotoHeader.vue'
 import PhotoToolbar from './components/PhotoToolbar.vue'
 import PhotoGallery from './components/PhotoGallery.vue'
 import PhotoCTA from './components/PhotoCTA.vue'
-import { heroImage } from '../../services/mediaService'
+import PhotoUpload from '../../component/PhotoUpload.vue'
 
-// Categories available in the gallery
 const categories = [
   'All photos',
   'Event',
@@ -16,58 +16,54 @@ const categories = [
   'Manila'
 ]
 
-// Selected filters
 const search = ref('')
 const activeCategory = ref('All photos')
 const sortOrder = ref('default')
 
-// Temporary photo data
-const photos = ref([
-  {
-    id: 1,
-    title: 'Together in Manila',
-    category: 'Event',
-    date: 'November 2, 2026',
-    image: heroImage
-  },
-  {
-    id: 2,
-    title: 'United in worship',
-    category: 'Ministry',
-    date: 'November 2, 2026',
-    image: heroImage
-  },
-  {
-    id: 3,
-    title: 'Warmth & fellowship',
-    category: 'Event',
-    date: 'November 2, 2026',
-    image: heroImage
-  },
-  {
-    id: 4,
-    title: 'Around the table',
-    category: 'Shared meals',
-    date: 'November 2, 2026',
-    image: heroImage
-  },
-  {
-    id: 5,
-    title: 'Moments together',
-    category: 'Ministry',
-    date: 'November 2, 2026',
-    image: heroImage
-  },
-  {
-    id: 6,
-    title: 'Manila, remembered',
-    category: 'Manila',
-    date: 'November 2, 2026',
-    image: heroImage
-  }
-])
+const photos = ref([])
+const loading = ref(true)
+const loadError = ref('')
 
-// Search and category filtering
+function formatDate(date) {
+  return new Date(date).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  })
+}
+
+async function fetchPhotos() {
+  loading.value = true
+  loadError.value = ''
+
+  try {
+    const response = await fetch('/api/media?type=photo')
+
+    if (!response.ok) {
+      throw new Error('Unable to load photos.')
+    }
+
+    const result = await response.json()
+
+    photos.value = result.items.map(item => ({
+      id: item.id,
+      title: item.title,
+      description: item.description,
+      category: item.category,
+      date: formatDate(item.created_at),
+      image: item.media_url
+    }))
+  } catch (error) {
+    loadError.value = error.message
+  } finally {
+    loading.value = false
+  }
+}
+
+function handleUpload() {
+  fetchPhotos()
+}
+
 const filteredPhotos = computed(() => {
   let result = photos.value.filter(photo => {
     const matchesCategory =
@@ -83,7 +79,6 @@ const filteredPhotos = computed(() => {
     return matchesCategory && matchesSearch
   })
 
-  // Sorting
   if (sortOrder.value === 'az') {
     result.sort((a, b) => a.title.localeCompare(b.title))
   }
@@ -98,11 +93,18 @@ const filteredPhotos = computed(() => {
 
   return result
 })
+
+onMounted(fetchPhotos)
 </script>
 
 <template>
   <div>
     <PhotoHeader />
+
+    <PhotoUpload
+      media-type="photo"
+      @uploaded="handleUpload"
+    />
 
     <PhotoToolbar
       :categories="categories"
@@ -114,7 +116,21 @@ const filteredPhotos = computed(() => {
       @update:sort-order="sortOrder = $event"
     />
 
-    <PhotoGallery :photos="filteredPhotos" />
+    <div v-if="loading" class="bg-[#FAF9F4] py-16 text-center text-sm text-gray-500">
+      Loading photos...
+    </div>
+
+    <div v-else-if="loadError" class="bg-[#FAF9F4] py-16 text-center text-sm text-red-600">
+      {{ loadError }}
+      <button @click="fetchPhotos" class="ml-2 underline">
+        Try again
+      </button>
+    </div>
+
+    <PhotoGallery
+      v-else
+      :photos="filteredPhotos"
+    />
 
     <PhotoCTA />
   </div>
