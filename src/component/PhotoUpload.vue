@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onBeforeUnmount } from 'vue'
+import { generatePhotoPreview } from '../services/photoPreviewService.js'
 
 const props = defineProps({
   mediaType: {
@@ -16,6 +17,7 @@ const password = ref('')
 const title = ref('')
 const description = ref('')
 const category = ref('Event')
+const selectedFiles = ref([])
 const selectedFile = ref(null)
 
 const uploading = ref(false)
@@ -25,6 +27,9 @@ const progress = ref(0)
 const uploadStatus = ref('')
 
 const isPhoto = computed(() => props.mediaType === 'photo')
+const selectedFilesSize = computed(() =>
+  selectedFiles.value.reduce((total, file) => total + file.size, 0),
+)
 
 const acceptedFiles = computed(() =>
   isPhoto.value
@@ -34,15 +39,22 @@ const acceptedFiles = computed(() =>
 
 const filePreview = ref('')
 
-function selectFile(event) {
+function setSelectedFiles(files) {
   if (filePreview.value) {
     URL.revokeObjectURL(filePreview.value)
   }
 
-  selectedFile.value = event.target.files[0] || null
+  selectedFiles.value = files
+  selectedFile.value = files[0] || null
 
   filePreview.value =
     selectedFile.value && isPhoto.value ? URL.createObjectURL(selectedFile.value) : ''
+}
+
+function selectFile(event) {
+  const files = Array.from(event.target.files || [])
+
+  setSelectedFiles(isPhoto.value ? files : files.slice(0, 1))
 
   message.value = ''
   error.value = ''
@@ -253,7 +265,7 @@ function sendThumbnail(videoId, thumbnailBlob) {
 // UPLOAD ORIGINAL MEDIA
 // --------------------------------------------------
 
-function sendUpload(file) {
+function sendUpload(file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
 
@@ -274,7 +286,7 @@ function sendUpload(file) {
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
-        progress.value = Math.round((event.loaded / event.total) * 100)
+        onProgress(event.loaded, event.total)
       }
     }
 
@@ -318,85 +330,122 @@ async function uploadMedia() {
   progress.value = 0
   uploadStatus.value = ''
 
-  const file = selectedFile.value
+  const files = isPhoto.value ? selectedFiles.value : [selectedFile.value].filter(Boolean)
 
   if (!password.value) {
     error.value = 'Please enter the upload password.'
     return
   }
 
-  if (!file) {
-    error.value = 'Please select a file.'
+  if (!files.length) {
+    error.value = `Please select ${isPhoto.value ? 'at least one photo' : 'a video'}.`
     return
   }
 
-  if (!title.value.trim()) {
-    error.value = 'Please enter a title.'
-    return
-  }
+  const supportedTypes = acceptedFiles.value.split(',')
 
-  if (file.size > 90 * 1024 * 1024) {
-    error.value = 'The maximum file size is 90 MB.'
-    return
-  }
+  for (const file of files) {
+    if (file.size <= 0) {
+      error.value = `${file.name}: The selected file is empty.`
+      return
+    }
 
-  if (!file.type || !acceptedFiles.value.split(',').includes(file.type)) {
-    error.value = 'This file format is not supported.'
-    return
+    if (file.size > 90 * 1024 * 1024) {
+      error.value = `${file.name}: The maximum file size is 90 MB.`
+      return
+    }
+
+    if (!file.type || !supportedTypes.includes(file.type)) {
+      error.value = `${file.name}: This file format is not supported.`
+      return
+    }
   }
 
   uploading.value = true
 
   try {
-    // Step 1: Upload original media.
-    uploadStatus.value = 'Uploading media...'
+    const uploadedResults = []
+    const failedFiles = []
+    const totalBytes = files.reduce((total, file) => total + file.size, 0)
+    let completedBytes = 0
+    const thumbnailWarnings = []
 
-    const result = await sendUpload(file)
-
-    let thumbnailWarning = ''
-
-    // Step 2: Generate and upload video thumbnail.
-    if (!isPhoto.value) {
+    for (const [index, file] of files.entries()) {
       try {
-        if (!result?.id) {
-          throw new Error('The server did not return a media ID.')
+        uploadStatus.value = files.length > 1
+          ? `Uploading photo ${index + 1} of ${files.length}...`
+          : 'Uploading media...'
+
+        const result = await sendUpload(file, (loaded) => {
+          progress.value = Math.round(((completedBytes + loaded) / totalBytes) * 100)
+        })
+
+        if (result?.id) {
+          try {
+            uploadStatus.value = isPhoto.value
+              ? 'Preparing photo preview...'
+              : 'Preparing video thumbnail...'
+            const thumbnailBlob = isPhoto.value
+              ? await generatePhotoPreview(file)
+              : await generateVideoThumbnail(file)
+
+            uploadStatus.value = 'Saving media preview...'
+            await sendThumbnail(result.id, thumbnailBlob)
+          } catch (thumbnailError) {
+            console.error('Media preview generation failed:', thumbnailError)
+            thumbnailWarnings.push(`${file.name}: ${thumbnailError.message}`)
+          }
         }
 
-        uploadStatus.value = 'Preparing video thumbnail...'
+        uploadedResults.push(result)
+      } catch (uploadError) {
+        failedFiles.push({
+          file,
+          message: uploadError.message || 'Something went wrong.',
+        })
+      }
 
-        const thumbnailBlob = await generateVideoThumbnail(file)
+      completedBytes += file.size
+      progress.value = Math.round((completedBytes / totalBytes) * 100)
+    }
 
-        uploadStatus.value = 'Saving video thumbnail...'
+    if (uploadedResults.length) {
+      message.value = files.length > 1
+        ? `${uploadedResults.length} of ${files.length} photos uploaded successfully.`
+        : 'Media uploaded successfully!'
 
-        await sendThumbnail(result.id, thumbnailBlob)
-      } catch (thumbnailError) {
-        console.error('Thumbnail generation failed:', thumbnailError)
-
-        thumbnailWarning =
-          ' The video was uploaded, but its thumbnail could not be generated: ' +
-          thumbnailError.message
+      if (thumbnailWarnings.length) {
+        message.value += ` Some previews could not be generated: ${thumbnailWarnings.join(' ')}`
       }
     }
 
-    progress.value = 100
-
-    message.value = `Media uploaded successfully!${thumbnailWarning}`
-
-    emit('uploaded', result)
-
-    // Reset form fields except password.
-    title.value = ''
-    description.value = ''
-    category.value = 'Event'
-
-    if (filePreview.value) {
-      URL.revokeObjectURL(filePreview.value)
-      filePreview.value = ''
+    if (failedFiles.length) {
+      error.value = failedFiles
+        .map(({ file, message: failureMessage }) => `${file.name}: ${failureMessage}`)
+        .join(' ')
     }
 
-    selectedFile.value = null
-  } catch (err) {
-    error.value = err.message || 'Something went wrong.'
+    if (isPhoto.value && files.length > 1) {
+      setSelectedFiles(failedFiles.map(({ file }) => file))
+      emit('uploaded', {
+        results: uploadedResults,
+        failures: failedFiles.map(({ file, message: failureMessage }) => ({
+          name: file.name,
+          message: failureMessage,
+        })),
+      })
+    } else if (uploadedResults.length) {
+      emit('uploaded', uploadedResults[0])
+    }
+
+    if (uploadedResults.length && !failedFiles.length) {
+      title.value = ''
+      description.value = ''
+      category.value = 'Event'
+      setSelectedFiles([])
+    }
+  } catch (uploadError) {
+    error.value = uploadError.message || 'Something went wrong.'
   } finally {
     uploading.value = false
     uploadStatus.value = ''
@@ -411,7 +460,7 @@ async function uploadMedia() {
         <p class="text-[10px] uppercase tracking-[0.2em] text-[#77758A]">Archive contribution</p>
 
         <h2 class="mt-3 font-serif text-3xl text-[#393970]">
-          Add {{ isPhoto ? 'a photo' : 'a video' }}
+          Add {{ isPhoto ? (selectedFiles.length > 1 ? 'photos' : 'a photo') : 'a video' }}
         </h2>
 
         <p class="mt-2 text-sm text-gray-500">Share a memory with the Eternal Happiness archive.</p>
@@ -435,18 +484,22 @@ async function uploadMedia() {
         <!-- File -->
         <div>
           <label class="mb-2 block text-xs text-[#393970]">
-            Select {{ isPhoto ? 'photo' : 'video' }}
+            Select {{ isPhoto ? (selectedFiles.length > 1 ? 'photos' : 'photo') : 'video' }}
           </label>
 
           <input
             type="file"
             :accept="acceptedFiles"
+            :multiple="isPhoto"
             required
             @change="selectFile"
             class="w-full border border-[#DCD9E8] bg-white p-3 text-sm"
           />
 
-          <p class="mt-2 text-[10px] text-gray-400">Maximum file size: 90 MB</p>
+          <p class="mt-2 text-[10px] text-gray-400">
+            Maximum file size: 90 MB per file
+            <span v-if="isPhoto"> · Select multiple photos to upload them together</span>
+          </p>
 
           <div v-if="selectedFile" class="mt-3">
             <img
@@ -456,10 +509,16 @@ async function uploadMedia() {
               class="max-h-64 w-full bg-[#EFEDF7] object-contain"
             />
 
+            <p v-if="isPhoto && selectedFiles.length > 1" class="mt-2 text-xs text-gray-500">
+              {{ selectedFiles.length }} photos selected. The title, description, and category
+              below will apply to all.
+            </p>
+
             <p class="mt-2 text-xs text-gray-500">
-              File: {{ selectedFile.name }}
+              File{{ selectedFiles.length > 1 ? 's' : '' }}:
+              {{ selectedFiles.map((file) => file.name).join(', ') }}
               <br />
-              Size: {{ (selectedFile.size / (1024 * 1024)).toFixed(2) }} MB
+              Size: {{ (selectedFilesSize / (1024 * 1024)).toFixed(2) }} MB total
               <br />
               Format: {{ selectedFile.type || 'Unknown' }}
             </p>
@@ -472,27 +531,26 @@ async function uploadMedia() {
 
         <!-- Title -->
         <div>
-          <label class="mb-2 block text-xs text-[#393970]"> Title </label>
+          <label class="mb-2 block text-xs text-[#393970]"> Title (optional) </label>
 
           <input
             v-model="title"
             type="text"
             maxlength="150"
-            required
-            placeholder="Enter a title"
+            placeholder="Can be added by an admin later"
             class="w-full border border-[#DCD9E8] bg-white px-4 py-3 text-sm outline-none focus:border-[#393970]"
           />
         </div>
 
         <!-- Description -->
         <div>
-          <label class="mb-2 block text-xs text-[#393970]"> Description </label>
+          <label class="mb-2 block text-xs text-[#393970]"> Description (optional) </label>
 
           <textarea
             v-model="description"
             maxlength="1000"
             rows="3"
-            placeholder="Write a short description (optional)"
+            placeholder="Can be added by an admin later"
             class="w-full resize-none border border-[#DCD9E8] bg-white px-4 py-3 text-sm outline-none focus:border-[#393970]"
           ></textarea>
         </div>
@@ -541,7 +599,13 @@ async function uploadMedia() {
           :disabled="uploading"
           class="w-full bg-[#393970] px-6 py-4 text-xs uppercase tracking-widest text-white transition hover:bg-[#292952] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {{ uploading ? 'Uploading...' : 'Upload to archive' }}
+          {{
+            uploading
+              ? uploadStatus || 'Uploading...'
+              : isPhoto && selectedFiles.length > 1
+                ? `Upload ${selectedFiles.length} photos`
+                : 'Upload to archive'
+          }}
         </button>
       </form>
     </div>

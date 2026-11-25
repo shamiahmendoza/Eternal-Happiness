@@ -9,6 +9,13 @@ const CATEGORIES = {
   Manila: 'manila',
 }
 
+const DEFAULT_PHOTO_SETTING_KEYS = Object.fromEntries(
+  Object.entries(CATEGORIES).map(([category, value]) => [
+    category,
+    `default_photo_${value}`,
+  ]),
+)
+
 const ALLOWED_TYPES = {
   photo: [
     'image/jpeg',
@@ -210,9 +217,9 @@ async function uploadMedia(request, env) {
     request.headers.get('X-Category'),
   ).trim()
 
-  if (!title || title.length > 150) {
+  if (title.length > 150) {
     return json({
-      error: 'A valid title is required.',
+      error: 'Title must not exceed 150 characters.',
     }, 400)
   }
 
@@ -334,15 +341,18 @@ async function uploadMedia(request, env) {
 }
 
 // --------------------------------------------------
-// UPLOAD VIDEO THUMBNAIL
+// UPLOAD MEDIA THUMBNAIL
 // --------------------------------------------------
 
 async function uploadThumbnail(request, env, id) {
-  const authorized = await requireUploadPassword(request, env)
+  const uploadAuthorized = await requireUploadPassword(request, env)
+  const adminAuthorized = uploadAuthorized
+    ? false
+    : await requireAdminPassword(request, env)
 
-  if (!authorized) {
+  if (!uploadAuthorized && !adminAuthorized) {
     return json({
-      error: 'Invalid upload password.',
+      error: 'Invalid upload or admin password.',
     }, 401)
   }
 
@@ -383,12 +393,6 @@ async function uploadThumbnail(request, env, id) {
       }, 404)
     }
 
-    if (media.media_type !== 'video') {
-      return json({
-        error: 'Thumbnails can only be added to videos.',
-      }, 400)
-    }
-
     const thumbnailBuffer = await request.arrayBuffer()
 
     if (
@@ -427,7 +431,7 @@ async function uploadThumbnail(request, env, id) {
     console.error('Thumbnail upload error:', error)
 
     return json({
-      error: 'Could not save video thumbnail.',
+      error: 'Could not save media thumbnail.',
       details: error.message,
     }, 500)
   }
@@ -587,6 +591,255 @@ async function setFeaturedVideo(request, env) {
 }
 
 // --------------------------------------------------
+// GET DEFAULT PHOTOS
+// --------------------------------------------------
+
+async function getDefaultPhotos(env) {
+  const categories = Object.keys(DEFAULT_PHOTO_SETTING_KEYS)
+  const settingKeys = categories.map(
+    (category) => DEFAULT_PHOTO_SETTING_KEYS[category],
+  )
+
+  try {
+    const settingsResult = await env.eternalhappiness_db
+      .prepare(`
+        SELECT setting_key, setting_value
+        FROM site_settings
+        WHERE setting_key IN (${settingKeys.map(() => '?').join(', ')})
+      `)
+      .bind(...settingKeys)
+      .all()
+
+    const selectedIds = Object.fromEntries(
+      (settingsResult.results || []).map((setting) => [
+        setting.setting_key,
+        setting.setting_value,
+      ]),
+    )
+    const photoIds = categories.map(
+      (category) => selectedIds[DEFAULT_PHOTO_SETTING_KEYS[category]] || null,
+    )
+
+    const photosResult = await env.eternalhappiness_db
+      .prepare(`
+        SELECT id, title, description, category, r2_key, thumbnail_key, created_at
+        FROM media
+        WHERE media_type = 'photo'
+        AND id IN (${photoIds.map(() => '?').join(', ')})
+      `)
+      .bind(...photoIds)
+      .all()
+
+    const photosById = new Map(
+      (photosResult.results || []).map((photo) => [photo.id, photo]),
+    )
+    const defaults = Object.fromEntries(
+      categories.map((category) => {
+        const selectedId = selectedIds[DEFAULT_PHOTO_SETTING_KEYS[category]]
+        const photo = selectedId ? photosById.get(selectedId) : null
+
+        if (!photo || photo.category !== category) {
+          return [category, null]
+        }
+
+        return [
+          category,
+          {
+            id: photo.id,
+            title: photo.title,
+            description: photo.description,
+            category: photo.category,
+            media_url: getMediaUrl(photo.r2_key),
+            thumbnail_url: photo.thumbnail_key
+              ? getMediaUrl(photo.thumbnail_key)
+              : null,
+            created_at: photo.created_at,
+          },
+        ]
+      }),
+    )
+
+    return json({ defaults })
+  } catch (error) {
+    console.error('Get default photos error:', error)
+
+    return json({
+      error: 'Could not retrieve default photos.',
+    }, 500)
+  }
+}
+
+// --------------------------------------------------
+// SET DEFAULT PHOTO
+// --------------------------------------------------
+
+async function setDefaultPhoto(request, env) {
+  const authorized = await requireAdminPassword(request, env)
+
+  if (!authorized) {
+    return json({
+      error: 'Invalid admin password.',
+    }, 401)
+  }
+
+  let body
+
+  try {
+    body = await request.json()
+  } catch {
+    return json({
+      error: 'Invalid JSON request.',
+    }, 400)
+  }
+
+  const { category, id } = body || {}
+
+  if (!Object.hasOwn(DEFAULT_PHOTO_SETTING_KEYS, category) || !validId(id)) {
+    return json({
+      error: 'A valid photo ID and category are required.',
+    }, 400)
+  }
+
+  try {
+    const photo = await env.eternalhappiness_db
+      .prepare(`
+        SELECT id
+        FROM media
+        WHERE id = ?
+        AND media_type = 'photo'
+        AND category = ?
+      `)
+      .bind(id, category)
+      .first()
+
+    if (!photo) {
+      return json({
+        error: 'Selected photo was not found in that category.',
+      }, 404)
+    }
+
+    await env.eternalhappiness_db
+      .prepare(`
+        INSERT INTO site_settings (
+          setting_key,
+          setting_value,
+          updated_at
+        )
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(setting_key)
+        DO UPDATE SET
+          setting_value = excluded.setting_value,
+          updated_at = CURRENT_TIMESTAMP
+      `)
+      .bind(DEFAULT_PHOTO_SETTING_KEYS[category], id)
+      .run()
+
+    return json({
+      success: true,
+      category,
+      default_photo_id: id,
+    })
+  } catch (error) {
+    console.error('Set default photo error:', error)
+
+    return json({
+      error: 'Could not update the default photo.',
+      details: error.message,
+    }, 500)
+  }
+}
+
+// --------------------------------------------------
+// UPDATE MEDIA DETAILS
+// --------------------------------------------------
+
+async function updateMediaDetails(request, env, id) {
+  const authorized = await requireAdminPassword(request, env)
+
+  if (!authorized) {
+    return json({
+      error: 'Invalid admin password.',
+    }, 401)
+  }
+
+  if (!validId(id)) {
+    return json({
+      error: 'Invalid media ID.',
+    }, 400)
+  }
+
+  let details
+
+  try {
+    details = await request.json()
+  } catch {
+    return json({
+      error: 'Invalid JSON body.',
+    }, 400)
+  }
+
+  if (
+    !details ||
+    typeof details.title !== 'string' ||
+    typeof details.description !== 'string'
+  ) {
+    return json({
+      error: 'Title and description must be strings.',
+    }, 400)
+  }
+
+  const title = details.title.trim()
+  const description = details.description.trim()
+
+  if (title.length > 150) {
+    return json({
+      error: 'Title must not exceed 150 characters.',
+    }, 400)
+  }
+
+  if (description.length > 1000) {
+    return json({
+      error: 'Description must not exceed 1000 characters.',
+    }, 400)
+  }
+
+  try {
+    const media = await env.eternalhappiness_db
+      .prepare('SELECT id FROM media WHERE id = ?')
+      .bind(id)
+      .first()
+
+    if (!media) {
+      return json({
+        error: 'Media not found.',
+      }, 404)
+    }
+
+    await env.eternalhappiness_db
+      .prepare(`
+        UPDATE media
+        SET title = ?, description = ?
+        WHERE id = ?
+      `)
+      .bind(title, description, id)
+      .run()
+
+    return json({
+      success: true,
+      title,
+      description,
+    })
+  } catch (error) {
+    console.error('Update media details error:', error)
+
+    return json({
+      error: 'Could not update media details.',
+      details: error.message,
+    }, 500)
+  }
+}
+
+// --------------------------------------------------
 // DELETE MEDIA
 // --------------------------------------------------
 
@@ -604,6 +857,11 @@ async function deleteMedia(request, env, id) {
       error: 'Invalid media ID.',
     }, 400)
   }
+
+  const settingKeys = [
+    'featured_video_id',
+    ...Object.values(DEFAULT_PHOTO_SETTING_KEYS),
+  ]
 
   try {
     const media = await env.eternalhappiness_db
@@ -629,14 +887,14 @@ async function deleteMedia(request, env, id) {
       await env.MEDIA_BUCKET.delete(media.thumbnail_key)
     }
 
-    // Remove featured setting if this was the featured video.
+    // Clear featured/default selections if this media is selected.
     await env.eternalhappiness_db
       .prepare(`
         DELETE FROM site_settings
-        WHERE setting_key = 'featured_video_id'
+        WHERE setting_key IN (${settingKeys.map(() => '?').join(', ')})
         AND setting_value = ?
       `)
-      .bind(id)
+      .bind(...settingKeys, id)
       .run()
 
     // Delete D1 record.
@@ -867,6 +1125,22 @@ export default {
         return await setFeaturedVideo(request, env)
       }
 
+      // Get selected default photos.
+      if (
+        path === '/api/default-photos' &&
+        method === 'GET'
+      ) {
+        return await getDefaultPhotos(env)
+      }
+
+      // Set a selected default photo.
+      if (
+        path === '/api/default-photos' &&
+        method === 'POST'
+      ) {
+        return await setDefaultPhoto(request, env)
+      }
+
       // Upload a video thumbnail.
       const thumbnailMatch = path.match(
         /^\/api\/media\/([^/]+)\/thumbnail$/,
@@ -883,19 +1157,30 @@ export default {
         )
       }
 
-      // Delete media.
-      const deleteMatch = path.match(
+      // Update or delete media.
+      const mediaMatch = path.match(
         /^\/api\/media\/([^/]+)$/,
       )
 
       if (
-        deleteMatch &&
+        mediaMatch &&
+        method === 'PATCH'
+      ) {
+        return await updateMediaDetails(
+          request,
+          env,
+          mediaMatch[1],
+        )
+      }
+
+      if (
+        mediaMatch &&
         method === 'DELETE'
       ) {
         return await deleteMedia(
           request,
           env,
-          deleteMatch[1],
+          mediaMatch[1],
         )
       }
 

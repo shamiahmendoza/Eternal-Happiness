@@ -37,6 +37,16 @@ npm run dev
 npm run build
 ```
 
+### Apply Cloudflare D1 Migrations
+
+Apply pending database migrations before deploying the Worker:
+
+```sh
+npx wrangler d1 migrations apply eternalhappiness-db --remote
+```
+
+Photo uploads keep the original file and create a smaller JPEG preview for galleries and home-page cards. For previously uploaded photos, use Photos Admin's “Generate missing photo previews” action; originals are preserved.
+
 ### Lint with [ESLint](https://eslint.org/)
 
 ```sh

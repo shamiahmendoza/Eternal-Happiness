@@ -1,19 +1,25 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import PhotoHeader from './components/PhotoHeader.vue'
 import PhotoToolbar from './components/PhotoToolbar.vue'
 import PhotoGallery from './components/PhotoGallery.vue'
 import PhotoUpload from '../../component/PhotoUpload.vue'
+import { generatePhotoPreview } from '../../services/photoPreviewService.js'
 
 const route = useRoute()
+const router = useRouter()
 
 // Categories
 const categories = ['All photos', 'Event', 'Ministry', 'Shared meals', 'Manila']
+const photoCategories = categories.slice(1)
 
 // Photo data
 const photos = ref([])
+const defaultPhotoIds = ref(
+  Object.fromEntries(photoCategories.map((category) => [category, null])),
+)
 
 const search = ref('')
 const activeCategory = ref('All photos')
@@ -29,23 +35,21 @@ const showUploadModal = ref(false)
 const adminMode = ref(false)
 const adminPassword = ref('')
 const deletingId = ref(null)
+const editingPhotoId = ref(null)
+const savingMetadataId = ref(null)
+const editTitle = ref('')
+const editDescription = ref('')
 const deleteError = ref('')
 const deleteMessage = ref('')
-
-// Format date
-const formatDate = (dateValue) => {
-  if (!dateValue) return ''
-
-  const date = new Date(dateValue)
-
-  if (Number.isNaN(date.getTime())) return ''
-
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-}
+const metadataError = ref('')
+const metadataMessage = ref('')
+const defaultPhotoError = ref('')
+const defaultPhotoMessage = ref('')
+const settingDefaultPhotoId = ref(null)
+const generatingPreviews = ref(false)
+const previewProgress = ref('')
+const previewError = ref('')
+const previewMessage = ref('')
 
 // Fetch photos
 const fetchPhotos = async () => {
@@ -53,28 +57,105 @@ const fetchPhotos = async () => {
   loadError.value = ''
 
   try {
-    const response = await fetch('/api/media?type=photo')
+    const [response, defaultsResponse] = await Promise.all([
+      fetch('/api/media?type=photo'),
+      fetch('/api/default-photos'),
+    ])
 
-    if (!response.ok) {
-      throw new Error('Unable to load photos.')
+    if (!response.ok || !defaultsResponse.ok) {
+      throw new Error('Unable to load photos and category defaults.')
     }
 
-    const result = await response.json()
+    const [result, defaultsResult] = await Promise.all([
+      response.json(),
+      defaultsResponse.json(),
+    ])
 
     photos.value = (result.items || []).map((item) => ({
       id: item.id,
-      title: item.title,
-      description: item.description,
+      title: item.title || 'Untitled photo',
+      storedTitle: item.title || '',
+      description: item.description || '',
       category: item.category,
-      date: formatDate(item.created_at),
-      image: item.media_url,
+      image: item.thumbnail_url || item.media_url,
+      fullImage: item.media_url,
+      thumbnailUrl: item.thumbnail_url,
       createdAt: item.created_at,
     }))
+    defaultPhotoIds.value = Object.fromEntries(
+      photoCategories.map((category) => [
+        category,
+        defaultsResult.defaults?.[category]?.id || null,
+      ]),
+    )
   } catch (error) {
     console.error('Error fetching photos:', error)
     loadError.value = 'Unable to load photos. Please try again.'
   } finally {
     loading.value = false
+  }
+}
+
+async function generateMissingPhotoPreviews() {
+  previewError.value = ''
+  previewMessage.value = ''
+
+  if (!adminPassword.value.trim()) {
+    previewError.value = 'Please enter the admin password.'
+    return
+  }
+
+  const photosWithoutPreviews = photos.value.filter((photo) => !photo.thumbnailUrl)
+
+  if (!photosWithoutPreviews.length) return
+
+  generatingPreviews.value = true
+  let generatedCount = 0
+  const failures = []
+
+  try {
+    for (const [index, photo] of photosWithoutPreviews.entries()) {
+      previewProgress.value = `Generating preview ${index + 1} of ${photosWithoutPreviews.length}...`
+
+      try {
+        const imageResponse = await fetch(photo.fullImage)
+
+        if (!imageResponse.ok) {
+          throw new Error(`Could not download original photo (${imageResponse.status}).`)
+        }
+
+        const preview = await generatePhotoPreview(await imageResponse.blob())
+        const response = await fetch(`/api/media/${encodeURIComponent(photo.id)}/thumbnail`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'X-Admin-Password': adminPassword.value,
+            'X-File-Size': String(preview.size),
+          },
+          body: preview,
+        })
+        const result = await response.json()
+
+        if (!response.ok) {
+          throw new Error(result.error || 'Could not save photo preview.')
+        }
+
+        photo.thumbnailUrl = result.thumbnail_url
+        photo.image = result.thumbnail_url
+        generatedCount += 1
+      } catch (error) {
+        failures.push(`${photo.title}: ${error.message}`)
+      }
+    }
+
+    previewMessage.value = `${generatedCount} photo preview${generatedCount === 1 ? '' : 's'} generated.`
+
+    if (failures.length) {
+      previewError.value = failures.join(' ')
+    }
+  } finally {
+    generatingPreviews.value = false
+    previewProgress.value = ''
   }
 }
 
@@ -88,8 +169,11 @@ const closeUploadModal = () => {
 }
 
 // Refresh after successful upload
-const handleUpload = () => {
-  closeUploadModal()
+const handleUpload = (result) => {
+  if (!result?.failures?.length) {
+    closeUploadModal()
+  }
+
   fetchPhotos()
 }
 
@@ -112,6 +196,13 @@ const filteredPhotos = computed(() => {
   }
 
   result.sort((a, b) => {
+    if (activeCategory.value !== 'All photos') {
+      const defaultPhotoId = defaultPhotoIds.value[activeCategory.value]
+
+      if (a.id === defaultPhotoId) return -1
+      if (b.id === defaultPhotoId) return 1
+    }
+
     const dateA = new Date(a.createdAt || 0).getTime()
     const dateB = new Date(b.createdAt || 0).getTime()
 
@@ -120,6 +211,16 @@ const filteredPhotos = computed(() => {
 
   return result
 })
+
+watch(
+  () => route.query.category,
+  (category) => {
+    activeCategory.value = photoCategories.includes(category)
+      ? category
+      : 'All photos'
+  },
+  { immediate: true },
+)
 
 // Admin mode from footer link
 watch(
@@ -131,15 +232,142 @@ watch(
       adminPassword.value = ''
       deleteError.value = ''
       deleteMessage.value = ''
+      metadataError.value = ''
+      metadataMessage.value = ''
+      defaultPhotoError.value = ''
+      defaultPhotoMessage.value = ''
+      previewError.value = ''
+      previewMessage.value = ''
+      editingPhotoId.value = null
     }
   },
   { immediate: true },
 )
 
+function selectCategory(category) {
+  activeCategory.value = category
+
+  const query = { ...route.query }
+
+  if (category === 'All photos') {
+    delete query.category
+  } else {
+    query.category = category
+  }
+
+  router.replace({ query })
+}
+
+async function setDefaultPhoto(photo) {
+  defaultPhotoError.value = ''
+  defaultPhotoMessage.value = ''
+
+  if (!adminPassword.value.trim()) {
+    defaultPhotoError.value = 'Please enter the admin password.'
+    return
+  }
+
+  settingDefaultPhotoId.value = photo.id
+
+  try {
+    const response = await fetch('/api/default-photos', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Password': adminPassword.value,
+      },
+      body: JSON.stringify({
+        category: photo.category,
+        id: photo.id,
+      }),
+    })
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || 'Could not set the category default photo.')
+    }
+
+    defaultPhotoIds.value = {
+      ...defaultPhotoIds.value,
+      [photo.category]: photo.id,
+    }
+    defaultPhotoMessage.value = `${photo.category} home photo updated.`
+  } catch (error) {
+    console.error('Set default photo error:', error)
+    defaultPhotoError.value = error.message || 'Could not set the category default photo.'
+  } finally {
+    settingDefaultPhotoId.value = null
+  }
+}
+
+function editPhotoDetails(photo) {
+  editingPhotoId.value = photo.id
+  editTitle.value = photo.storedTitle
+  editDescription.value = photo.description
+  metadataError.value = ''
+  metadataMessage.value = ''
+}
+
+function cancelPhotoEdit() {
+  editingPhotoId.value = null
+  metadataError.value = ''
+}
+
+async function savePhotoDetails(photo) {
+  metadataError.value = ''
+  metadataMessage.value = ''
+
+  if (!adminPassword.value.trim()) {
+    metadataError.value = 'Please enter the admin password.'
+    return
+  }
+
+  savingMetadataId.value = photo.id
+
+  try {
+    const response = await fetch(`/api/media/${encodeURIComponent(photo.id)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Password': adminPassword.value,
+      },
+      body: JSON.stringify({
+        title: editTitle.value,
+        description: editDescription.value,
+      }),
+    })
+
+    if (response.status === 405) {
+      throw new Error(
+        'The deployed Worker does not support metadata edits yet. Deploy the latest Worker code and try again.',
+      )
+    }
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to update photo details.')
+    }
+
+    photo.storedTitle = result.title
+    photo.title = result.title || 'Untitled photo'
+    photo.description = result.description
+    editingPhotoId.value = null
+    metadataMessage.value = 'Photo details updated.'
+  } catch (error) {
+    console.error('Update photo details error:', error)
+    metadataError.value = error.message || 'Unable to update photo details.'
+  } finally {
+    savingMetadataId.value = null
+  }
+}
+
 // Delete photo
 const deletePhoto = async (photo) => {
   deleteError.value = ''
   deleteMessage.value = ''
+  metadataError.value = ''
+  metadataMessage.value = ''
 
   if (!adminPassword.value.trim()) {
     deleteError.value = 'Please enter the admin password.'
@@ -167,6 +395,12 @@ const deletePhoto = async (photo) => {
     }
 
     photos.value = photos.value.filter((item) => item.id !== photo.id)
+    if (defaultPhotoIds.value[photo.category] === photo.id) {
+      defaultPhotoIds.value = {
+        ...defaultPhotoIds.value,
+        [photo.category]: null,
+      }
+    }
 
     deleteMessage.value = `"${photo.title}" was deleted successfully.`
   } catch (error) {
@@ -190,7 +424,7 @@ onMounted(fetchPhotos)
     <Teleport to="body">
       <div
         v-if="showUploadModal"
-        class="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-8"
+        class="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-8"
         @click.self="closeUploadModal"
       >
         <div
@@ -228,14 +462,28 @@ onMounted(fetchPhotos)
       </div>
     </Teleport>
 
-    <!-- Admin Management Panel -->
-    <section v-if="adminMode" class="mx-auto max-w-7xl px-6 pb-8 md:px-10">
-      <div class="rounded-xl border border-gray-200 bg-gray-50 p-5 md:p-7">
+    <!-- Admin Management Modal -->
+    <Teleport to="body">
+      <div
+        v-if="adminMode"
+        class="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-8"
+        @click.self="router.push('/photos')"
+      >
+      <div
+        class="relative my-auto max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-5 shadow-2xl md:p-7"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="photoManagementTitle"
+      >
         <div class="mb-5 flex items-center justify-between gap-4">
           <div>
-            <h2 class="text-lg font-semibold text-gray-800">Photo Management</h2>
+            <h2 id="photoManagementTitle" class="text-lg font-semibold text-gray-800">
+              Photo Management
+            </h2>
 
-            <p class="mt-1 text-sm text-gray-500">Manage and delete uploaded photos.</p>
+            <p class="mt-1 text-sm text-gray-500">
+              Manage photos and add titles and descriptions.
+            </p>
           </div>
 
           <button
@@ -264,16 +512,19 @@ onMounted(fetchPhotos)
         </div>
 
         <!-- Error Message -->
-        <p v-if="deleteError" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">
-          {{ deleteError }}
+        <p
+          v-if="defaultPhotoError || metadataError || deleteError"
+          class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600"
+        >
+          {{ defaultPhotoError || metadataError || deleteError }}
         </p>
 
         <!-- Success Message -->
         <p
-          v-if="deleteMessage"
+          v-if="defaultPhotoMessage || metadataMessage || deleteMessage"
           class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700"
         >
-          {{ deleteMessage }}
+          {{ defaultPhotoMessage || metadataMessage || deleteMessage }}
         </p>
 
         <!-- Photo Count -->
@@ -281,6 +532,20 @@ onMounted(fetchPhotos)
           <h3 class="text-sm font-semibold text-gray-700">Uploaded Photos</h3>
 
           <span class="text-xs text-gray-500"> {{ photos.length }} photos </span>
+        </div>
+
+        <div v-if="photos.some((photo) => !photo.thumbnailUrl)" class="mb-4">
+          <button
+            type="button"
+            @click="generateMissingPhotoPreviews"
+            :disabled="generatingPreviews"
+            class="rounded-lg bg-[#393970] px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+          >
+            {{ generatingPreviews ? previewProgress : 'Generate missing photo previews' }}
+          </button>
+
+          <p v-if="previewMessage" class="mt-2 text-xs text-green-700">{{ previewMessage }}</p>
+          <p v-if="previewError" class="mt-2 text-xs text-red-600">{{ previewError }}</p>
         </div>
 
         <!-- Photo List -->
@@ -297,21 +562,99 @@ onMounted(fetchPhotos)
             />
 
             <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-medium text-gray-800">
-                {{ photo.title }}
-              </p>
+              <template v-if="editingPhotoId === photo.id">
+                <input
+                  v-model="editTitle"
+                  type="text"
+                  maxlength="150"
+                  placeholder="Photo title (optional)"
+                  class="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                />
 
-              <p class="mt-1 text-xs text-gray-500">{{ photo.category }} · {{ photo.date }}</p>
+                <textarea
+                  v-model="editDescription"
+                  maxlength="1000"
+                  rows="2"
+                  placeholder="Photo description (optional)"
+                  class="mt-2 w-full resize-y rounded border border-gray-300 px-3 py-2 text-sm"
+                ></textarea>
+
+                <div class="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    @click="savePhotoDetails(photo)"
+                    :disabled="savingMetadataId === photo.id"
+                    class="rounded bg-[#393970] px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+                  >
+                    {{ savingMetadataId === photo.id ? 'Saving...' : 'Save details' }}
+                  </button>
+
+                  <button
+                    type="button"
+                    @click="cancelPhotoEdit"
+                    :disabled="savingMetadataId === photo.id"
+                    class="rounded bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </template>
+
+              <template v-else>
+                <p class="truncate text-sm font-medium text-gray-800">
+                  {{ photo.title }}
+                </p>
+
+                <p class="mt-1 text-xs text-gray-500">
+                  {{ photo.category }}
+                  <span v-if="defaultPhotoIds[photo.category] === photo.id">
+                    · Home default
+                  </span>
+                </p>
+
+                <p v-if="photo.description" class="mt-1 line-clamp-2 text-xs text-gray-500">
+                  {{ photo.description }}
+                </p>
+              </template>
             </div>
 
-            <button
-              type="button"
-              @click="deletePhoto(photo)"
-              :disabled="deletingId === photo.id"
-              class="shrink-0 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {{ deletingId === photo.id ? 'Deleting...' : 'Delete' }}
-            </button>
+            <div class="flex shrink-0 flex-col gap-2">
+              <button
+                type="button"
+                @click="setDefaultPhoto(photo)"
+                :disabled="
+                  settingDefaultPhotoId !== null ||
+                  defaultPhotoIds[photo.category] === photo.id
+                "
+                class="rounded-lg bg-[#F5C400] px-3 py-2 text-xs font-medium text-[#393970] transition hover:bg-[#E5B600] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {{
+                  settingDefaultPhotoId === photo.id
+                    ? 'Saving...'
+                    : defaultPhotoIds[photo.category] === photo.id
+                      ? 'Home default'
+                      : 'Set as home photo'
+                }}
+              </button>
+
+              <button
+                type="button"
+                @click="editPhotoDetails(photo)"
+                :disabled="editingPhotoId !== null || savingMetadataId !== null"
+                class="rounded-lg bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
+              >
+                Edit details
+              </button>
+
+              <button
+                type="button"
+                @click="deletePhoto(photo)"
+                :disabled="deletingId === photo.id"
+                class="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {{ deletingId === photo.id ? 'Deleting...' : 'Delete' }}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -319,7 +662,8 @@ onMounted(fetchPhotos)
           No photos available.
         </p>
       </div>
-    </section>
+      </div>
+    </Teleport>
 
     <!-- Loading -->
     <div v-if="loading" class="mx-auto max-w-7xl px-6 py-10 text-center text-sm text-gray-500">
@@ -349,7 +693,7 @@ onMounted(fetchPhotos)
         :active-category="activeCategory"
         :sort-order="sortOrder"
         @update:search="search = $event"
-        @update:active-category="activeCategory = $event"
+        @update:active-category="selectCategory"
         @update:sort-order="sortOrder = $event"
       />
 

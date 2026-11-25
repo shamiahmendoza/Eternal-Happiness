@@ -48,7 +48,7 @@ defineEmits(['close'])
           {{ video.title }}
         </h2>
 
-        <p class="mt-1 text-xs text-white/60">
+        <p v-if="video.description" class="mt-2 text-sm leading-relaxed text-white/75">
           {{ video.description }}
         </p>
       </div>

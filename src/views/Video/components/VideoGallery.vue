@@ -67,6 +67,10 @@ const emit = defineEmits(['play'])
             <p class="mt-1 text-[10px] uppercase tracking-wider text-gray-400">
               {{ video.date }}
             </p>
+
+            <p v-if="video.description" class="mt-2 line-clamp-2 text-xs leading-relaxed text-gray-500">
+              {{ video.description }}
+            </p>
           </div>
 
           <button

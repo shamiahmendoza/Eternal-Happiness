@@ -9,7 +9,7 @@ export function getMediaUrl(key) {
     .map(encodeURIComponent)
     .join('/')
 
-  return `${R2_BASE_URL.replace(/\/$/, '')}/${cleanKey}`
+  return `${R2_BASE_URL.replace(/\/$/, '')}/media/${cleanKey}`
 }
 
 export const heroImage = getMediaUrl('Event/cat.jpg')

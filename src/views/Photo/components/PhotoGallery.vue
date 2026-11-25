@@ -33,6 +33,7 @@ const selectedPhoto = ref(null)
               :src="photo.image"
               :alt="photo.title"
               loading="lazy"
+              decoding="async"
               class="aspect-[4/3] w-full object-cover transition duration-500 group-hover:scale-105"
             />
 
@@ -79,14 +80,14 @@ const selectedPhoto = ref(null)
 
       <div class="w-full max-w-5xl">
         <img
-          :src="selectedPhoto.image"
+          :src="selectedPhoto.fullImage || selectedPhoto.image"
           :alt="selectedPhoto.title"
           class="mx-auto max-h-[75vh] w-full object-contain"
         />
 
         <div class="mt-4 text-center">
           <p class="mt-1 text-[10px] uppercase tracking-widest text-white/60">
-            {{ selectedPhoto.category }} · {{ selectedPhoto.date }}
+            {{ selectedPhoto.category }}
           </p>
         </div>
       </div>

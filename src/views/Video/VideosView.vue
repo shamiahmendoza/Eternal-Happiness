@@ -26,9 +26,15 @@ const adminPassword = ref('')
 
 const deletingId = ref(null)
 const settingFeaturedId = ref(null)
+const editingVideoId = ref(null)
+const savingMetadataId = ref(null)
+const editTitle = ref('')
+const editDescription = ref('')
 
 const deleteError = ref('')
 const deleteMessage = ref('')
+const metadataError = ref('')
+const metadataMessage = ref('')
 const featuredError = ref('')
 const featuredMessage = ref('')
 
@@ -49,7 +55,8 @@ function formatDate(date) {
 function mapVideo(item) {
   return {
     id: item.id,
-    title: item.title,
+    title: item.title || 'Untitled video',
+    storedTitle: item.title || '',
     description: item.description || '',
     category: item.category,
     thumbnail: item.thumbnail_url || null,
@@ -168,6 +175,8 @@ async function selectFeatured(video) {
   settingFeaturedId.value = video.id
   featuredError.value = ''
   featuredMessage.value = ''
+  metadataError.value = ''
+  metadataMessage.value = ''
 
   const success = await makeFeaturedVideo(video.id)
 
@@ -190,6 +199,9 @@ watch(
       adminPassword.value = ''
       deleteError.value = ''
       deleteMessage.value = ''
+      metadataError.value = ''
+      metadataMessage.value = ''
+      editingVideoId.value = null
       featuredError.value = ''
       featuredMessage.value = ''
       closeUploadModal()
@@ -203,9 +215,86 @@ function closeAdmin() {
   router.push('/videos')
 }
 
+function editVideoDetails(video) {
+  editingVideoId.value = video.id
+  editTitle.value = video.storedTitle
+  editDescription.value = video.description
+  metadataError.value = ''
+  metadataMessage.value = ''
+}
+
+function cancelVideoEdit() {
+  editingVideoId.value = null
+  metadataError.value = ''
+}
+
+async function saveVideoDetails(video) {
+  metadataError.value = ''
+  metadataMessage.value = ''
+
+  if (!adminPassword.value.trim()) {
+    metadataError.value = 'Please enter the admin password.'
+    return
+  }
+
+  savingMetadataId.value = video.id
+
+  try {
+    const response = await fetch(`/api/media/${encodeURIComponent(video.id)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Password': adminPassword.value,
+      },
+      body: JSON.stringify({
+        title: editTitle.value,
+        description: editDescription.value,
+      }),
+    })
+
+    if (response.status === 405) {
+      throw new Error(
+        'The deployed Worker does not support metadata edits yet. Deploy the latest Worker code and try again.',
+      )
+    }
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to update video details.')
+    }
+
+    video.storedTitle = result.title
+    video.title = result.title || 'Untitled video'
+    video.description = result.description
+
+    if (featuredVideo.value?.id === video.id) {
+      featuredVideo.value.title = video.title
+      featuredVideo.value.description = video.description
+      featuredVideo.value.storedTitle = video.storedTitle
+    }
+
+    if (selectedVideo.value?.id === video.id) {
+      selectedVideo.value.title = video.title
+      selectedVideo.value.description = video.description
+      selectedVideo.value.storedTitle = video.storedTitle
+    }
+
+    editingVideoId.value = null
+    metadataMessage.value = 'Video details updated.'
+  } catch (error) {
+    console.error('Update video details error:', error)
+    metadataError.value = error.message || 'Unable to update video details.'
+  } finally {
+    savingMetadataId.value = null
+  }
+}
+
 async function deleteVideo(video) {
   deleteError.value = ''
   deleteMessage.value = ''
+  metadataError.value = ''
+  metadataMessage.value = ''
 
   if (!adminPassword.value.trim()) {
     deleteError.value = 'Please enter the admin password.'
@@ -259,7 +348,7 @@ refreshVideos()
     <Teleport to="body">
       <div
         v-if="showUploadModal"
-        class="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-8"
+        class="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-8"
         @click.self="closeUploadModal"
       >
         <div
@@ -314,14 +403,28 @@ refreshVideos()
       </div>
     </Teleport>
 
-    <!-- Admin Management Panel -->
-    <section v-if="adminMode" class="mx-auto max-w-7xl px-6 pb-8 md:px-10">
-      <div class="rounded-xl border border-gray-200 bg-white p-5 md:p-7">
+    <!-- Admin Management Modal -->
+    <Teleport to="body">
+      <div
+        v-if="adminMode"
+        class="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-8"
+        @click.self="closeAdmin"
+      >
+      <div
+        class="relative my-auto max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-xl border border-gray-200 bg-white p-5 shadow-2xl md:p-7"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="videoManagementTitle"
+      >
         <div class="mb-5 flex items-center justify-between gap-4">
           <div>
-            <h2 class="text-lg font-semibold text-gray-800">Video Management</h2>
+            <h2 id="videoManagementTitle" class="text-lg font-semibold text-gray-800">
+              Video Management
+            </h2>
 
-            <p class="mt-1 text-sm text-gray-500">Manage videos and choose your Featured Video.</p>
+            <p class="mt-1 text-sm text-gray-500">
+              Manage videos, update their details, and choose your Featured Video.
+            </p>
           </div>
 
           <button
@@ -350,17 +453,17 @@ refreshVideos()
         </div>
 
         <p
-          v-if="deleteError || featuredError"
+          v-if="metadataError || deleteError || featuredError"
           class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600"
         >
-          {{ deleteError || featuredError }}
+          {{ metadataError || deleteError || featuredError }}
         </p>
 
         <p
-          v-if="deleteMessage || featuredMessage"
+          v-if="metadataMessage || deleteMessage || featuredMessage"
           class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700"
         >
-          {{ deleteMessage || featuredMessage }}
+          {{ metadataMessage || deleteMessage || featuredMessage }}
         </p>
 
         <!-- Video Count -->
@@ -392,21 +495,74 @@ refreshVideos()
             </div>
 
             <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-medium text-gray-800">
-                {{ video.title }}
-              </p>
+              <template v-if="editingVideoId === video.id">
+                <input
+                  v-model="editTitle"
+                  type="text"
+                  maxlength="150"
+                  placeholder="Video title (optional)"
+                  class="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                />
 
-              <p class="mt-1 text-xs text-gray-500">{{ video.category }} · {{ video.date }}</p>
+                <textarea
+                  v-model="editDescription"
+                  maxlength="1000"
+                  rows="2"
+                  placeholder="Video description (optional)"
+                  class="mt-2 w-full resize-y rounded border border-gray-300 px-3 py-2 text-sm"
+                ></textarea>
 
-              <p
-                v-if="featuredVideo?.id === video.id"
-                class="mt-1 text-[10px] font-semibold uppercase tracking-wider text-[#77758A]"
-              >
-                Current Featured Video
-              </p>
+                <div class="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    @click="saveVideoDetails(video)"
+                    :disabled="savingMetadataId === video.id"
+                    class="rounded bg-[#393970] px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+                  >
+                    {{ savingMetadataId === video.id ? 'Saving...' : 'Save details' }}
+                  </button>
+
+                  <button
+                    type="button"
+                    @click="cancelVideoEdit"
+                    :disabled="savingMetadataId === video.id"
+                    class="rounded bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </template>
+
+              <template v-else>
+                <p class="truncate text-sm font-medium text-gray-800">
+                  {{ video.title }}
+                </p>
+
+                <p class="mt-1 text-xs text-gray-500">{{ video.category }} · {{ video.date }}</p>
+
+                <p v-if="video.description" class="mt-1 line-clamp-2 text-xs text-gray-500">
+                  {{ video.description }}
+                </p>
+
+                <p
+                  v-if="featuredVideo?.id === video.id"
+                  class="mt-1 text-[10px] font-semibold uppercase tracking-wider text-[#77758A]"
+                >
+                  Current Featured Video
+                </p>
+              </template>
             </div>
 
             <div class="flex shrink-0 flex-col gap-2">
+              <button
+                type="button"
+                @click="editVideoDetails(video)"
+                :disabled="editingVideoId !== null || savingMetadataId !== null"
+                class="rounded-lg bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
+              >
+                Edit details
+              </button>
+
               <button
                 v-if="featuredVideo?.id !== video.id"
                 type="button"
@@ -433,7 +589,8 @@ refreshVideos()
           No videos available.
         </p>
       </div>
-    </section>
+      </div>
+    </Teleport>
 
     <!-- Loading -->
     <div v-if="loading" class="bg-[#FAF9F4] py-16 text-center text-sm text-gray-500">
