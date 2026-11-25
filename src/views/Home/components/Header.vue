@@ -1,7 +1,10 @@
-
 <script setup>
 import { ref } from 'vue'
 import { heroImage } from '../../../services/mediaService'
+
+defineOptions({
+  name: 'HomeHeader',
+})
 
 const imageLoaded = ref(false)
 const imageError = ref(false)

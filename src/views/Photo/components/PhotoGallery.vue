@@ -41,14 +41,6 @@ const selectedPhoto = ref(null)
             </span>
           </button>
 
-          <!-- Photo Details -->
-          <h2 class="mt-3 font-serif text-lg text-[#393970]">
-            {{ photo.title }}
-          </h2>
-
-          <p class="mt-1 text-[9px] uppercase tracking-[0.15em] text-gray-400">
-            {{ photo.category }} · {{ photo.date }}
-          </p>
         </article>
 
       </div>
@@ -93,10 +85,6 @@ const selectedPhoto = ref(null)
         />
 
         <div class="mt-4 text-center">
-          <h2 class="font-serif text-xl text-white">
-            {{ selectedPhoto.title }}
-          </h2>
-
           <p class="mt-1 text-[10px] uppercase tracking-widest text-white/60">
             {{ selectedPhoto.category }} · {{ selectedPhoto.date }}
           </p>
