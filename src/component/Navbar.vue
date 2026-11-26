@@ -1,5 +1,7 @@
 <script setup>
 import { ref, watch } from 'vue'
+
+defineOptions({ name: 'AppNavbar' })
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
@@ -9,7 +11,6 @@ const navLinks = [
   { name: 'Home', path: '/' },
   { name: 'Photos', path: '/photos' },
   { name: 'Videos', path: '/videos' },
-  { name: 'Memories', path: '/memories' },
 ]
 
 watch(

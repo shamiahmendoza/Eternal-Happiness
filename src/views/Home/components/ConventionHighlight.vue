@@ -12,7 +12,7 @@
         </h2>
 
         <p class="mt-5 max-w-lg text-xs leading-6 text-white/70">
-          We gathered in Manila for a day of heartfelt worship,
+          We gathered in Silang, Cavite for a day of heartfelt worship,
           encouragement, and the joy of our worldwide brotherhood.
         </p>
 
@@ -21,7 +21,6 @@
           class="mt-7 inline-flex items-center gap-8 bg-[#F5C400] px-5 py-3 text-xs font-medium text-[#393970] transition hover:bg-[#E5B600]"
         >
           About the convention
-          <span>↗</span>
         </RouterLink>
       </div>
 
@@ -40,7 +39,7 @@
           </p>
 
           <h3 class="mt-3 font-serif text-xl">
-            "Eternal Happiness"
+            "2026 ETERNAL HAPPINESS International Convention of Jehovah's Witnesses in Philippines"
           </h3>
         </div>
       </div>

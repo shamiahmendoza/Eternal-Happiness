@@ -5,7 +5,6 @@ const navLinks = [
   { name: 'Home', path: '/' },
   { name: 'Photos', path: '/photos' },
   { name: 'Videos', path: '/videos' },
-  { name: 'Memories', path: '/memories' },
   { name: 'About', path: '/about' },
 ]
 </script>
@@ -42,14 +41,17 @@ const navLinks = [
         <!-- Bible Verse -->
         <div>
           <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider text-yellow-300">
-            A Reminder
+            A Reminder: See Yourself as Jehovah Does
           </h3>
 
           <p class="text-sm italic leading-relaxed text-white/80">
-            "How good and how pleasant it is..."
+            "For you became precious in my eyes,
+            You were honored, and I have loved you.
+            So I will give people in place of you
+            And nations in exchange for your life."
           </p>
 
-          <p class="mt-2 text-xs text-white/50">Psalm 133:1</p>
+          <p class="mt-2 text-xs text-white/50">Isaiah 43:4</p>
         </div>
       </div>
 

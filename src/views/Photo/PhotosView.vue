@@ -21,7 +21,6 @@ const defaultPhotoIds = ref(
   Object.fromEntries(photoCategories.map((category) => [category, null])),
 )
 
-const search = ref('')
 const activeCategory = ref('All photos')
 const sortOrder = ref('newest')
 
@@ -177,22 +176,12 @@ const handleUpload = (result) => {
   fetchPhotos()
 }
 
-// Search, filter, and sort photos
+// Filter and sort photos
 const filteredPhotos = computed(() => {
   let result = [...photos.value]
 
   if (activeCategory.value !== 'All photos') {
     result = result.filter((photo) => photo.category === activeCategory.value)
-  }
-
-  if (search.value.trim()) {
-    const keyword = search.value.toLowerCase()
-
-    result = result.filter((photo) =>
-      [photo.title, photo.description, photo.category]
-        .filter(Boolean)
-        .some((value) => value.toLowerCase().includes(keyword)),
-    )
   }
 
   result.sort((a, b) => {
@@ -689,10 +678,8 @@ onMounted(fetchPhotos)
     <template v-else>
       <PhotoToolbar
         :categories="categories"
-        :search="search"
         :active-category="activeCategory"
         :sort-order="sortOrder"
-        @update:search="search = $event"
         @update:active-category="selectCategory"
         @update:sort-order="sortOrder = $event"
       />

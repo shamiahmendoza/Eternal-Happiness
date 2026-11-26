@@ -1,30 +1,9 @@
 <script setup>
-import { ref } from 'vue'
-import { heroImage } from '../../../services/mediaService'
+import headerImage from '../../../assets/Header1.png'
 
 defineOptions({
   name: 'HomeHeader',
 })
-
-const imageLoaded = ref(false)
-const imageError = ref(false)
-
-console.log('Hero image URL:', heroImage)
-
-function handleImageLoad() {
-  imageLoaded.value = true
-  imageError.value = false
-
-  console.log('Hero image loaded successfully:', heroImage)
-}
-
-function handleImageError(event) {
-  imageLoaded.value = false
-  imageError.value = true
-
-  console.error('Failed image URL:', event.target.currentSrc)
-  console.error('Image source:', event.target.src)
-}
 </script>
 
 <template>
@@ -34,7 +13,7 @@ function handleImageError(event) {
       <!-- Hero Text -->
       <div class="order-2 md:order-1">
         <p class="mb-5 text-[10px] uppercase tracking-[0.25em] text-[#77758A]">
-          Manila · November 2, 2026
+          Silang, Cavite · November 2, 2026
         </p>
 
         <h1 class="font-serif text-5xl leading-[0.95] text-[#393970] md:text-7xl">
@@ -45,7 +24,7 @@ function handleImageError(event) {
 
         <p class="mt-6 max-w-md text-sm leading-6 text-gray-500">
           Photos, videos, and treasured memories from our
-          2026 International Convention in Manila.
+          2026 International Convention Hosting in Silang, Cavite.
           A day together. A lifetime to remember.
         </p>
 
@@ -55,7 +34,7 @@ function handleImageError(event) {
             class="inline-flex items-center gap-8 bg-[#F5C400] px-5 py-3 text-xs font-medium text-[#393970] transition hover:bg-[#E5B600]"
           >
             Browse all photos
-            <span>↗</span>
+            <span></span>
           </RouterLink>
 
           <RouterLink
@@ -69,45 +48,18 @@ function handleImageError(event) {
 
       <!-- Hero Image -->
       <div class="order-1 md:order-2">
-        <div class="relative">
+        <div class="relative border-r-[12px] border-[#F5C400] pr-3">
 
           <img
-            :src="heroImage"
+            :src="headerImage"
             alt="Convention gathering"
-            class="h-[300px] w-full object-cover md:h-[450px]"
-            @load="handleImageLoad"
-            @error="handleImageError"
+            class="h-auto w-full object-contain"
           />
-
-          <!-- Image Loading Status -->
-          <div
-            v-if="!imageLoaded && !imageError"
-            class="absolute bottom-3 left-3 bg-white/90 px-3 py-2 text-[10px] text-gray-500"
-          >
-            Loading R2 image...
-          </div>
-
-          <div
-            v-if="imageLoaded"
-            class="absolute bottom-3 left-3 bg-green-100 px-3 py-2 text-[10px] text-green-700"
-          >
-            R2 image loaded successfully
-          </div>
-
-          <div
-            v-if="imageError"
-            class="absolute bottom-3 left-3 max-w-[90%] break-all bg-red-100 px-3 py-2 text-[10px] text-red-700"
-          >
-            Unable to load R2 image.
-            <br />
-            {{ heroImage }}
-          </div>
 
         </div>
 
         <div class="mt-3 flex justify-between text-[9px] uppercase tracking-widest text-gray-400">
-          <span>Faith. Friendship. Forever.</span>
-          <span>01 / 04</span>
+          <span>SPRINGVILE CONGREGATION WITH DELEGATES AROUND THE WORLD</span>
         </div>
       </div>
 

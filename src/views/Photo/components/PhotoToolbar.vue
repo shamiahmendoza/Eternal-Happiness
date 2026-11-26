@@ -1,9 +1,5 @@
 <script setup>
 defineProps({
-  search: {
-    type: String,
-    default: ''
-  },
   activeCategory: {
     type: String,
     default: 'All photos'
@@ -19,7 +15,6 @@ defineProps({
 })
 
 const emit = defineEmits([
-  'update:search',
   'update:activeCategory',
   'update:sortOrder'
 ])
@@ -30,17 +25,6 @@ const emit = defineEmits([
     <div class="mx-auto max-w-7xl">
 
       <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-
-        <!-- Search -->
-        <div class="w-full lg:max-w-md">
-          <input
-            :value="search"
-            @input="emit('update:search', $event.target.value)"
-            type="search"
-            placeholder="Search photos..."
-            class="w-full border border-[#E7E3D9] bg-white px-4 py-3 text-xs text-[#393970] outline-none transition placeholder:text-gray-400 focus:border-[#393970]"
-          />
-        </div>
 
         <!-- Category Filters -->
         <div class="flex flex-wrap gap-2">

@@ -1,7 +1,5 @@
 <script setup>
-import { heroImage } from '../../../services/mediaService'
-
-const image = heroImage
+import headerImage from '../../../assets/Header2.jpg'
 </script>
 
 <template>
@@ -10,7 +8,7 @@ const image = heroImage
     <!-- Photo -->
     <div class="min-h-[280px] md:min-h-[400px]">
       <img
-        :src="image"
+        :src="headerImage"
         alt="Friends celebrating together"
         loading="lazy"
         class="h-full min-h-[280px] w-full object-cover md:min-h-[400px]"
@@ -29,7 +27,7 @@ const image = heroImage
       </h2>
 
       <p class="mt-7 text-[9px] uppercase tracking-[0.2em] text-[#393970]/70">
-        Manila · November 2, 2026
+        Silang, Cavite · November 2, 2026
       </p>
 
     </div>

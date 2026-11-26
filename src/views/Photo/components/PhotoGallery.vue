@@ -56,7 +56,7 @@ const selectedPhoto = ref(null)
         </h2>
 
         <p class="mt-2 text-xs text-gray-500">
-          Try another search term or category.
+          Try another category.
         </p>
       </div>
 

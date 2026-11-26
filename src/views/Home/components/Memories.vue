@@ -1,3 +1,9 @@
+<script setup>
+defineOptions({
+  name: 'ConventionMemories',
+})
+</script>
+
 <template>
   <section class="bg-[#FAF9F4] px-6 py-12 md:px-12 md:py-16">
     <div class="mx-auto grid max-w-7xl items-center gap-10 md:grid-cols-2">
@@ -22,7 +28,6 @@
           class="mt-6 inline-flex items-center gap-8 bg-[#F5C400] px-5 py-3 text-xs font-medium text-[#393970] transition hover:bg-[#E5B600]"
         >
           Explore the memories
-          <span>↗</span>
         </RouterLink>
       </div>
 

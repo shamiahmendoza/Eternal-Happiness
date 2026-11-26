@@ -4,7 +4,7 @@
 
       <div>
         <p class="text-[9px] uppercase tracking-[0.25em] text-[#77758A]">
-          Manila 2026 · Photo Archive
+          Silang, Cavite, Philippines 2026 · Photo Archive
         </p>
 
         <h1 class="mt-5 font-serif text-5xl leading-none text-[#393970] md:text-7xl">

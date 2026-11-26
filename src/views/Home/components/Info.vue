@@ -1,3 +1,9 @@
+<script setup>
+defineOptions({
+  name: 'ConventionInfo',
+})
+</script>
+
 <template>
   <section class="border-y border-[#E9E6DC] bg-white px-6 py-5 md:px-12">
     <div class="mx-auto grid max-w-7xl grid-cols-3">
@@ -7,7 +13,7 @@
           Nov 2, 2026
         </h2>
         <p class="mt-2 text-[9px] uppercase tracking-widest text-gray-400">
-          Manila, Philippines
+          Silang, Cavite, Philippines
         </p>
       </div>
 
